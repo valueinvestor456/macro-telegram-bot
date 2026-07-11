@@ -1,0 +1,28 @@
+name: Send macro summary to Telegram
+
+# Thailand times 08:00 / 10:00 / 14:00 / 16:00 (UTC+7) -> UTC 01:00 / 03:00 / 07:00 / 09:00.
+# GitHub cron can fire a few minutes late under load; that's fine for this use case.
+on:
+  schedule:
+    - cron: "0 1 * * *"
+    - cron: "0 3 * * *"
+    - cron: "0 7 * * *"
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - run: python main.py --once
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
