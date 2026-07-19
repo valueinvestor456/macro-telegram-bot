@@ -12,10 +12,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import calendar
+import json
+import math
 import os
+import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -166,6 +170,20 @@ FETCHERS = {
 }
 
 
+def fetch_market_data_json() -> dict | None:
+    """PMI levels + Thai/US policy rates aren't scraped by this project --
+    pull the already-published usd/market-data.json from the deepsleep456.com
+    dashboard (refreshed hourly there) instead of duplicating that scraping
+    here. Returns None on any failure; callers degrade gracefully."""
+    try:
+        resp = requests.get("https://deepsleep456.com/usd/market-data.json", timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"  [FAIL -> omit score/CIP] market-data.json: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
 def fetch_all() -> dict:
     """Fetch every asset; failures become None (rendered as N/A) instead of crashing."""
     out = {}
@@ -181,6 +199,104 @@ def fetch_all() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 1b) THB STRENGTH SCORE + CIP FUTURES FAIR VALUE
+# (same formulas/weights/defaults as usd/index.html's recalc()/recalcAnchors()
+#  on the deepsleep456.com/usd dashboard -- kept in sync manually)
+# ---------------------------------------------------------------------------
+def _clamp3(x: float) -> float:
+    return max(-3.0, min(3.0, x))
+
+
+def compute_thb_score(d: dict, market: dict | None) -> dict | None:
+    dxy, gold, us10y, th10y, bdi = d.get("DXY"), d.get("GOLD"), d.get("US10Y"), d.get("TH10Y"), d.get("BDI")
+    if not (dxy and gold and us10y and th10y):
+        return None
+
+    v_dxy, v_xau, v_bdi = 0.35, 1.0, 2.0
+    spr_neutral, spr_scale = 1.50, 0.75
+    w = {"DXY": 0.60, "XAU": 0.17, "SPR": 0.22, "BDI": 0.10, "PMI": 0.15}
+
+    s_dxy = _clamp3(-dxy["pct"] / v_dxy) if dxy.get("pct") is not None else 0.0
+    s_xau = _clamp3(gold["pct"] / v_xau) if gold.get("pct") is not None else 0.0
+    spread = us10y["last"] - th10y["last"]
+    s_spr = _clamp3(-(spread - spr_neutral) / spr_scale)
+    s_bdi = _clamp3(bdi["pct"] / v_bdi) if (bdi and bdi.get("pct") is not None) else 0.0
+
+    s_pmi = 0.0
+    pmi = {k: (market or {}).get(f"pmi_{k}") for k in ("cn", "th", "in", "us")}
+    if all(pmi[k] and pmi[k].get("last") is not None for k in pmi):
+        cn, th, inn, us = (pmi[k]["last"] for k in ("cn", "th", "in", "us"))
+        pmi_div = 0.40 * (cn - 50) / 5 + 0.35 * (th - 50) / 5 + 0.15 * (inn - 50) / 5 - 0.10 * (us - 50) / 5
+        s_pmi = _clamp3(pmi_div)
+
+    total = w["DXY"] * s_dxy + w["XAU"] * s_xau + w["SPR"] * s_spr + w["BDI"] * s_bdi + w["PMI"] * s_pmi
+    score = 100 * math.tanh(total)
+    if score >= 30:
+        verdict = "🟢 THB แข็งแรง — USD/THB bias ลง"
+    elif score <= -30:
+        verdict = "🔴 THB อ่อนแรง — USD/THB bias ขึ้น"
+    else:
+        verdict = "⚪ เป็นกลาง — สัญญาณไม่ชัด"
+    return {"score": score, "verdict": verdict}
+
+
+# TFEX USD futures list quarterly (Mar/Jun/Sep/Dec) -- same approximation as
+# usd/index.html's updateSettlementFromSeries(): last calendar day of the
+# contract month minus 2 days (no Thai holiday calendar), so treat "days" as
+# approximate, not exact.
+TFEX_QUARTER_MONTHS = [3, 6, 9, 12]
+MONTH_CODE_BY_IDX = {0: "F", 1: "G", 2: "H", 3: "J", 4: "K", 5: "M",
+                      6: "N", 7: "Q", 8: "U", 9: "V", 10: "X", 11: "Z"}
+
+
+def next_tfex_settlement(today: date | None = None) -> tuple[date, int, int]:
+    today = today or date.today()
+    y = today.year
+    while True:
+        for m in TFEX_QUARTER_MONTHS:
+            if y == today.year and m < today.month:
+                continue
+            last_day = calendar.monthrange(y, m)[1]
+            settlement = date(y, m, last_day) - timedelta(days=2)
+            if settlement >= today:
+                return settlement, y, m
+        y += 1
+
+
+def format_trend_line(market: dict | None) -> str:
+    """EMA(20)/EMA(50) trend filter, as a USD1! (TFEX USD futures) proxy -- no
+    free API for the actual futures series, but it tracks USD/THB spot
+    closely via CIP arbitrage. Computed server-side (THB=X via yfinance) in
+    the dashboard project's scripts/fetch_market_data.py and read here from
+    the same published usd/market-data.json rather than re-scraping it.
+    Direction is the EMA20-vs-EMA50 crossover -- the two numbers alone tell
+    the story, no separate signal needed."""
+    trend = (market or {}).get("usdthb_trend")
+    if not trend:
+        return "Trend (EMA20/50): N/A ⚠️"
+    up = trend["direction"] == "up"
+    arrow = "🟢 Uptrend" if up else "🔴 Downtrend"
+    sign = ">" if up else "<"
+    return f"Trend (EMA20/50, USD1! proxy): {arrow} (EMA20 {trend['ema20']:.3f} {sign} EMA50 {trend['ema50']:.3f})"
+
+
+def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
+    usdthb = d.get("USDTHB")
+    if not usdthb or not market:
+        return None
+    i_th = (market.get("th_rate") or {}).get("last")
+    i_us = (market.get("us_rate") or {}).get("last")
+    if i_th is None or i_us is None:
+        return None
+    settlement, y, m = next_tfex_settlement()
+    days = max((settlement - date.today()).days, 1)
+    t = days / 365.0
+    cip_fair = usdthb["last"] * (1 + i_th / 100 * t) / (1 + i_us / 100 * t)
+    series = f"USD{MONTH_CODE_BY_IDX[m - 1]}{y % 100:02d}"
+    return {"fair": cip_fair, "series": series}
+
+
+# ---------------------------------------------------------------------------
 # 2) MESSAGE FORMATTING + TELEGRAM
 # ---------------------------------------------------------------------------
 def _line(name: str, data: dict | None, label: str) -> str:
@@ -193,12 +309,17 @@ def _line(name: str, data: dict | None, label: str) -> str:
     return f"{label}: {val}  {arrow} {data['pct']:+.2f}%"
 
 
-def format_message(d: dict) -> str:
+def format_message(d: dict, market: dict | None) -> str:
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
     lines = [
         f"📊 Macro Summary — {now} (TH)",
         "",
         _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
+    ]
+    cip = compute_cip_fair(d, market)
+    lines.append(f"📐 Futures ยุติธรรม (CIP {cip['series']}): {cip['fair']:.4f}" if cip else "📐 Futures ยุติธรรม (CIP): N/A ⚠️")
+    lines.append(format_trend_line(market))
+    lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
         _line("GOLD", d.get("GOLD"), "🥇 Gold"),
         _line("US10Y", d.get("US10Y"), "🇺🇸 US10Y"),
@@ -209,20 +330,27 @@ def format_message(d: dict) -> str:
     if us and th:
         spread = us["last"] - th["last"]
         lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 กว้าง (outflow risk)' if spread > 2.0 else ''}")
-    fc_table = format_forecast_table()
-    if fc_table:
-        lines += ["", fc_table]
+
+    score = compute_thb_score(d, market)
+    lines.append(f"🎯 THB Strength Score: {score['score']:+.0f}\n{score['verdict']}" if score else "🎯 THB Strength Score: N/A ⚠️")
+
     lines += ["", "ดูสด: deepsleep456.com/usd"]
     return "\n".join(lines)
 
 
-def format_forecast_table() -> str | None:
-    """Fixed-width 10Y forecast table (US / TH / spread) for Telegram <pre> block."""
-    try:
-        fc = scrape_bond10y_forecasts({"US": "united-states", "TH": "thailand"})
-    except Exception as e:
-        print(f"  [FAIL -> omit] forecast table: {type(e).__name__}: {e}", file=sys.stderr)
-        return None
+# ---------------------------------------------------------------------------
+# 1c) BOND 10Y FORECAST -- alert-only (not in every Macro Summary anymore,
+# since TE's forecast barely moves run to run). Baseline is the last snapshot
+# that actually triggered an alert, persisted to bond10y_forecast_state.json
+# and git-committed back to the repo so the next scheduled run (fresh
+# checkout) can compare against it -- same pattern as the DR-scan project's
+# telegram_dr_bot.py persisting its getUpdates offset.
+# ---------------------------------------------------------------------------
+FORECAST_STATE_PATH = Path(__file__).with_name("bond10y_forecast_state.json")
+FORECAST_ALERT_THRESHOLD = 0.05  # percentage points, any single quarter
+
+
+def _render_forecast_table(fc: dict) -> str:
     us, th = fc["US"], fc["TH"]
     n = min(len(us["quarters"]), len(th["quarters"]), 4)
     labels = [q[0] for q in us["quarters"][:n]]
@@ -234,13 +362,76 @@ def format_forecast_table() -> str | None:
     us_vals = [q[1] for q in us["quarters"][:n]]
     th_vals = [q[1] for q in th["quarters"][:n]]
     sp_vals = [u - t for u, t in zip(us_vals, th_vals)]
-    table = "\n".join([
+    return "\n".join([
         head,
         row("US", us["last"], us_vals),
         row("TH", th["last"], th_vals),
         row("Spread", us["last"] - th["last"], sp_vals),
     ])
-    return "📉 Bond 10Y Forecast (TradingEconomics)\n<pre>" + table + "</pre>"
+
+
+def _forecast_max_diff(current: dict, baseline: dict) -> float:
+    """Max abs diff (percentage points) across quarters present in both
+    snapshots -- quarters roll off/on over time as TE's window advances, so
+    only overlapping quarter labels (e.g. "Q3/26") are compared."""
+    max_diff = 0.0
+    for country, cur in current.items():
+        base = baseline.get(country)
+        if not base:
+            continue
+        base_map = dict(base["quarters"])
+        for label, val in cur["quarters"]:
+            if label in base_map:
+                max_diff = max(max_diff, abs(val - base_map[label]))
+    return max_diff
+
+
+def _git_commit_forecast_state():
+    """`git diff --quiet` (unstaged) never flags a brand-new untracked file as
+    changed, so the very first baseline would silently never get committed --
+    stage first, then check the *staged* diff against HEAD instead."""
+    repo_dir = Path(__file__).resolve().parent
+    try:
+        subprocess.run(["git", "add", str(FORECAST_STATE_PATH)], cwd=repo_dir, check=True)
+        diff = subprocess.run(["git", "diff", "--cached", "--quiet", "--", str(FORECAST_STATE_PATH)], cwd=repo_dir)
+        if diff.returncode == 0:
+            return  # unchanged
+        subprocess.run(["git", "commit", "-m", "Bond 10Y forecast: update alert baseline [skip ci]"],
+                        cwd=repo_dir, check=True)
+        subprocess.run(["git", "push"], cwd=repo_dir, check=True)
+    except Exception as e:
+        print("git_commit_forecast_state error:", e, file=sys.stderr)
+
+
+def check_forecast_alert() -> str | None:
+    """Returns a Telegram-ready alert string if the 10Y forecast moved >=
+    FORECAST_ALERT_THRESHOLD pp on any quarter since the last alert baseline,
+    else None. First-ever run (no baseline yet) just records one silently."""
+    try:
+        fc = scrape_bond10y_forecasts({"US": "united-states", "TH": "thailand"})
+    except Exception as e:
+        print(f"  [FAIL -> skip forecast alert check] {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+    current = {country: {"last": v["last"], "quarters": v["quarters"]} for country, v in fc.items()}
+
+    baseline = None
+    if FORECAST_STATE_PATH.exists():
+        try:
+            baseline = json.loads(FORECAST_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            baseline = None
+
+    if baseline is not None and _forecast_max_diff(current, baseline) < FORECAST_ALERT_THRESHOLD:
+        return None
+
+    FORECAST_STATE_PATH.write_text(json.dumps(current), encoding="utf-8")
+    _git_commit_forecast_state()
+    if baseline is None:
+        return None  # nothing to compare against yet -- just established
+
+    table = _render_forecast_table(fc)
+    return f"⚠️ Bond 10Y Forecast เปลี่ยน ≥{FORECAST_ALERT_THRESHOLD:.2f}pp (TradingEconomics)\n<pre>{table}</pre>"
 
 
 def send_telegram(text: str) -> bool:
@@ -263,7 +454,8 @@ def send_telegram(text: str) -> bool:
 def job():
     print(f"\n=== fetching @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
     data = fetch_all()
-    send_telegram(format_message(data))
+    market = fetch_market_data_json()
+    send_telegram(format_message(data, market))
 
 
 # ---------------------------------------------------------------------------

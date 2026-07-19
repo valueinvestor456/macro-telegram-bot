@@ -10,6 +10,9 @@ on:
     - cron: "0 9 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   send:
     runs-on: ubuntu-latest
@@ -21,6 +24,11 @@ jobs:
           python-version: "3.11"
 
       - run: pip install -r requirements.txt
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - run: python main.py --once
         env:
