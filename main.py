@@ -237,7 +237,9 @@ def compute_thb_score(d: dict, market: dict | None) -> dict | None:
         verdict = "🔴 THB อ่อนแรง — USD/THB bias ขึ้น"
     else:
         verdict = "⚪ เป็นกลาง — สัญญาณไม่ชัด"
-    return {"score": score, "verdict": verdict}
+    # short_verdict: sign-only (no neutral bucket) for the compact USD/THB line
+    short_verdict = "บาทแข็งค่า" if score >= 0 else "บาทอ่อนค่า"
+    return {"score": score, "verdict": verdict, "short_verdict": short_verdict}
 
 
 # TFEX USD futures list quarterly (Mar/Jun/Sep/Dec) -- same approximation as
@@ -277,7 +279,7 @@ def format_trend_line(market: dict | None) -> str:
     up = trend["direction"] == "up"
     arrow = "🟢 Uptrend" if up else "🔴 Downtrend"
     sign = ">" if up else "<"
-    return f"Trend (EMA20/50, USD1! proxy): {arrow} (EMA20 {trend['ema20']:.3f} {sign} EMA50 {trend['ema50']:.3f})"
+    return f"{arrow} (EMA20 {trend['ema20']:.3f} {sign} EMA50 {trend['ema50']:.3f})"
 
 
 def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
@@ -311,13 +313,16 @@ def _line(name: str, data: dict | None, label: str) -> str:
 
 def format_message(d: dict, market: dict | None) -> str:
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    score = compute_thb_score(d, market)
+    score_part = f"  🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "  🎯 Score N/A ⚠️"
+
     lines = [
         f"📊 Macro Summary — {now} (TH)",
         "",
-        _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
+        _line("USDTHB", d.get("USDTHB"), "💱 USD/THB") + score_part,
     ]
     cip = compute_cip_fair(d, market)
-    lines.append(f"📐 Futures ยุติธรรม (CIP {cip['series']}): {cip['fair']:.4f}" if cip else "📐 Futures ยุติธรรม (CIP): N/A ⚠️")
+    lines.append(f"📐 Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "📐 Futures ยุติธรรม: N/A ⚠️")
     lines.append(format_trend_line(market))
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
@@ -331,10 +336,7 @@ def format_message(d: dict, market: dict | None) -> str:
         spread = us["last"] - th["last"]
         lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 กว้าง (outflow risk)' if spread > 2.0 else ''}")
 
-    score = compute_thb_score(d, market)
-    lines.append(f"🎯 THB Strength Score: {score['score']:+.0f}\n{score['verdict']}" if score else "🎯 THB Strength Score: N/A ⚠️")
-
-    lines += ["", "ดูสด: deepsleep456.com/usd"]
+    lines.append("ดูสด: deepsleep456.com/usd")
     return "\n".join(lines)
 
 
