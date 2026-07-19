@@ -320,7 +320,15 @@ def fetch_manual_fut_price() -> dict | None:
         return None
 
 
-def format_manual_fut_line(manual: dict | None) -> str:
+def format_manual_fut_line(manual: dict | None, usdthb: dict | None) -> str:
+    """Compact line matching the other asset lines' style (label: value arrow
+    %change) -- the actual futures price has no independently-tracked day
+    change of its own (only a point-in-time /fut <price> snapshot), so this
+    reuses USD/THB's own %change as an approximation (futures track spot
+    closely via CIP arbitrage). Basis vs fair value is intentionally left
+    for the reader to eyeball against the very next line (fair value) rather
+    than spelled out here -- same "let the numbers tell it" style as the
+    EMA20/50 trend line."""
     if not manual:
         return "USDU26 จริง: ยังไม่มีคนส่ง /fut <ราคา>"
     try:
@@ -331,15 +339,11 @@ def format_manual_fut_line(manual: dict | None) -> str:
     if age_hours is not None and age_hours > MANUAL_FUT_STALE_HOURS:
         return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut <ราคา> ใหม่"
 
-    basis = manual["basis"]
-    if basis > 0.03:
-        dot = "🔴 RICH"
-    elif basis < -0.03:
-        dot = "🟢 CHEAP"
+    if usdthb and usdthb.get("pct") is not None:
+        arrow = f"{'🟢▲' if usdthb['pct'] >= 0 else '🔴▼'} {usdthb['pct']:+.2f}%"
     else:
-        dot = "⚪ FAIR"
-    when = asof.astimezone(ZoneInfo("Asia/Bangkok")).strftime("%d/%m %H:%M") if asof else "?"
-    return f"{manual['series']} จริง: {manual['price']:.4f} · Basis {basis:+.4f} {dot} (asof {when})"
+        arrow = ""
+    return f"{manual['series']} จริง: {manual['price']:.4f} {arrow}".rstrip()
 
 
 # ---------------------------------------------------------------------------
@@ -358,16 +362,17 @@ def _line(name: str, data: dict | None, label: str) -> str:
 def format_message(d: dict, market: dict | None) -> str:
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
     score = compute_thb_score(d, market)
-    score_part = f"  🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "  🎯 Score N/A ⚠️"
+    score_line = f"🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "🎯 Score N/A ⚠️"
 
     lines = [
         f"📊 Macro Summary — {now} (TH)",
         "",
-        _line("USDTHB", d.get("USDTHB"), "💱 USD/THB") + score_part,
+        _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
+        score_line,
+        format_manual_fut_line(fetch_manual_fut_price(), d.get("USDTHB")),
     ]
-    lines.append(format_manual_fut_line(fetch_manual_fut_price()))
     cip = compute_cip_fair(d, market)
-    lines.append(f"📐 Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "📐 Futures ยุติธรรม: N/A ⚠️")
+    lines.append(f"Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "Futures ยุติธรรม: N/A ⚠️")
     lines.append(format_trend_line(market))
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
@@ -379,7 +384,7 @@ def format_message(d: dict, market: dict | None) -> str:
     us, th = d.get("US10Y"), d.get("TH10Y")
     if us and th:
         spread = us["last"] - th["last"]
-        lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 กว้าง (outflow risk)' if spread > 2.0 else ''}")
+        lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
 
     lines.append("ดูสด: deepsleep456.com/usd")
     return "\n".join(lines)
