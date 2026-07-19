@@ -19,8 +19,9 @@ import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 import schedule
@@ -298,6 +299,49 @@ def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
     return {"fair": cip_fair, "series": series}
 
 
+MANUAL_FUT_STALE_HOURS = 48
+
+
+def fetch_manual_fut_price() -> dict | None:
+    """No free automated source for the actual traded TFEX futures price (see
+    telegram_dr_bot.py's cmd_fut docstring -- also looked at scraping TFEX's
+    own site directly; its market-data page is a Nuxt SSR app with the quote
+    fetched client-side from an internal API behind Imperva bot protection,
+    not worth pursuing). Instead, whenever you run "/fut <price>" on the DR
+    bot it persists that submission to usd/manual-fut-price.json, published
+    the same way as market-data.json -- read it here so the Macro Summary can
+    show the last price you actually reported, with its age."""
+    try:
+        resp = requests.get("https://deepsleep456.com/usd/manual-fut-price.json", timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        print(f"  [FAIL -> omit manual futures price] manual-fut-price.json: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
+def format_manual_fut_line(manual: dict | None) -> str:
+    if not manual:
+        return "USDU26 จริง: ยังไม่มีคนส่ง /fut <ราคา>"
+    try:
+        asof = datetime.fromisoformat(manual["asof"].replace("Z", "+00:00"))
+    except Exception:
+        asof = None
+    age_hours = (datetime.now(timezone.utc) - asof).total_seconds() / 3600 if asof else None
+    if age_hours is not None and age_hours > MANUAL_FUT_STALE_HOURS:
+        return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut <ราคา> ใหม่"
+
+    basis = manual["basis"]
+    if basis > 0.03:
+        dot = "🔴 RICH"
+    elif basis < -0.03:
+        dot = "🟢 CHEAP"
+    else:
+        dot = "⚪ FAIR"
+    when = asof.astimezone(ZoneInfo("Asia/Bangkok")).strftime("%d/%m %H:%M") if asof else "?"
+    return f"{manual['series']} จริง: {manual['price']:.4f} · Basis {basis:+.4f} {dot} (asof {when})"
+
+
 # ---------------------------------------------------------------------------
 # 2) MESSAGE FORMATTING + TELEGRAM
 # ---------------------------------------------------------------------------
@@ -321,6 +365,7 @@ def format_message(d: dict, market: dict | None) -> str:
         "",
         _line("USDTHB", d.get("USDTHB"), "💱 USD/THB") + score_part,
     ]
+    lines.append(format_manual_fut_line(fetch_manual_fut_price()))
     cip = compute_cip_fair(d, market)
     lines.append(f"📐 Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "📐 Futures ยุติธรรม: N/A ⚠️")
     lines.append(format_trend_line(market))
