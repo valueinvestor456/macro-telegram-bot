@@ -230,7 +230,14 @@ def compute_thb_score(d: dict, market: dict | None) -> dict | None:
         pmi_div = 0.40 * (cn - 50) / 5 + 0.35 * (th - 50) / 5 + 0.15 * (inn - 50) / 5 - 0.10 * (us - 50) / 5
         s_pmi = _clamp3(pmi_div)
 
-    total = w["DXY"] * s_dxy + w["XAU"] * s_xau + w["SPR"] * s_spr + w["BDI"] * s_bdi + w["PMI"] * s_pmi
+    contrib = {
+        "DXY": w["DXY"] * s_dxy,
+        "Gold": w["XAU"] * s_xau,
+        "Spread": w["SPR"] * s_spr,
+        "BDI": w["BDI"] * s_bdi,
+        "PMI": w["PMI"] * s_pmi,
+    }
+    total = sum(contrib.values())
     score = 100 * math.tanh(total)
     if score >= 30:
         verdict = "🟢 THB แข็งแรง — USD/THB bias ลง"
@@ -240,7 +247,7 @@ def compute_thb_score(d: dict, market: dict | None) -> dict | None:
         verdict = "⚪ เป็นกลาง — สัญญาณไม่ชัด"
     # short_verdict: sign-only (no neutral bucket) for the compact USD/THB line
     short_verdict = "บาทแข็งค่า" if score >= 0 else "บาทอ่อนค่า"
-    return {"score": score, "verdict": verdict, "short_verdict": short_verdict}
+    return {"score": score, "verdict": verdict, "short_verdict": short_verdict, "contrib": contrib}
 
 
 # TFEX USD futures list quarterly (Mar/Jun/Sep/Dec) -- same approximation as
@@ -330,14 +337,14 @@ def format_manual_fut_line(manual: dict | None, usdthb: dict | None) -> str:
     than spelled out here -- same "let the numbers tell it" style as the
     EMA20/50 trend line."""
     if not manual:
-        return "USDU26 จริง: ยังไม่มีคนส่ง /fut <ราคา>"
+        return "USDU26 จริง: ยังไม่มีคนส่ง /fut [ราคา]"
     try:
         asof = datetime.fromisoformat(manual["asof"].replace("Z", "+00:00"))
     except Exception:
         asof = None
     age_hours = (datetime.now(timezone.utc) - asof).total_seconds() / 3600 if asof else None
     if age_hours is not None and age_hours > MANUAL_FUT_STALE_HOURS:
-        return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut <ราคา> ใหม่"
+        return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut [ราคา] ใหม่"
 
     if usdthb and usdthb.get("pct") is not None:
         arrow = f"{'🟢▲' if usdthb['pct'] >= 0 else '🔴▼'} {usdthb['pct']:+.2f}%"
@@ -369,8 +376,11 @@ def format_message(d: dict, market: dict | None) -> str:
         "",
         _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
         score_line,
-        format_manual_fut_line(fetch_manual_fut_price(), d.get("USDTHB")),
     ]
+    if score:
+        breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
+        lines.append(f"   ⤷ {breakdown}")
+    lines.append(format_manual_fut_line(fetch_manual_fut_price(), d.get("USDTHB")))
     cip = compute_cip_fair(d, market)
     lines.append(f"Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "Futures ยุติธรรม: N/A ⚠️")
     lines.append(format_trend_line(market))
