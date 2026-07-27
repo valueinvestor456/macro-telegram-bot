@@ -309,15 +309,38 @@ def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
 MANUAL_FUT_STALE_HOURS = 48
 
 
+def fetch_tfex_usd_futures() -> dict | None:
+    """Real, live-traded TFEX USD futures price (front-month, auto-rolling)
+    via TradingView's public scanner API -- no auth, no desktop app/CDP
+    needed, so it works from GitHub Actions runners even when the PC is off.
+    (TFEX's own market-data page has no free API of its own: it's a Nuxt SSR
+    app whose quote is fetched client-side from an internal endpoint behind
+    Imperva bot protection -- not worth scraping. This sidesteps that by
+    using TradingView's redistribution of the same feed instead.)"""
+    try:
+        resp = requests.post(
+            "https://scanner.tradingview.com/global/scan",
+            json={"symbols": {"tickers": ["TFEX:USD1!"]}, "columns": ["close", "change"]},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("data") or []
+        if not rows:
+            return None
+        close, pct = rows[0]["d"]
+        return {"price": close, "pct": pct}
+    except Exception as e:
+        print(f"  [FAIL -> fall back to manual futures price] scanner.tradingview.com: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
 def fetch_manual_fut_price() -> dict | None:
-    """No free automated source for the actual traded TFEX futures price (see
-    telegram_dr_bot.py's cmd_fut docstring -- also looked at scraping TFEX's
-    own site directly; its market-data page is a Nuxt SSR app with the quote
-    fetched client-side from an internal API behind Imperva bot protection,
-    not worth pursuing). Instead, whenever you run "/fut <price>" on the DR
-    bot it persists that submission to usd/manual-fut-price.json, published
-    the same way as market-data.json -- read it here so the Macro Summary can
-    show the last price you actually reported, with its age."""
+    """Fallback only -- see fetch_tfex_usd_futures() for the live source now
+    used first. Kept as a backstop for whenever TradingView's scanner API is
+    unreachable: whenever you run "/fut <price>" on the DR bot it persists
+    that submission to usd/manual-fut-price.json, published the same way as
+    market-data.json -- read it here so the Macro Summary can still show the
+    last price you actually reported, with its age."""
     try:
         resp = requests.get("https://deepsleep456.com/usd/manual-fut-price.json", timeout=15)
         resp.raise_for_status()
@@ -327,17 +350,20 @@ def fetch_manual_fut_price() -> dict | None:
         return None
 
 
-def format_manual_fut_line(manual: dict | None, usdthb: dict | None) -> str:
-    """Compact line matching the other asset lines' style (label: value arrow
-    %change) -- the actual futures price has no independently-tracked day
-    change of its own (only a point-in-time /fut <price> snapshot), so this
-    reuses USD/THB's own %change as an approximation (futures track spot
-    closely via CIP arbitrage). Basis vs fair value is intentionally left
-    for the reader to eyeball against the very next line (fair value) rather
-    than spelled out here -- same "let the numbers tell it" style as the
-    EMA20/50 trend line."""
+def format_fut_line(cip: dict | None) -> str:
+    """Compact line matching the other asset lines' style (label: value
+    arrow %change) for the real, live-traded TFEX USD futures price. Falls
+    back to the last manually-reported price (with its age) only if the
+    live TradingView feed is unreachable."""
+    series = cip["series"] if cip else "USD futures"
+    live = fetch_tfex_usd_futures()
+    if live:
+        arrow = f"{'🟢▲' if live['pct'] >= 0 else '🔴▼'} {live['pct']:+.2f}%"
+        return f"{series} จริง: {live['price']:.4f} {arrow}"
+
+    manual = fetch_manual_fut_price()
     if not manual:
-        return "USDU26 จริง: ยังไม่มีคนส่ง /fut [ราคา]"
+        return f"{series} จริง: N/A ⚠️"
     try:
         asof = datetime.fromisoformat(manual["asof"].replace("Z", "+00:00"))
     except Exception:
@@ -345,12 +371,7 @@ def format_manual_fut_line(manual: dict | None, usdthb: dict | None) -> str:
     age_hours = (datetime.now(timezone.utc) - asof).total_seconds() / 3600 if asof else None
     if age_hours is not None and age_hours > MANUAL_FUT_STALE_HOURS:
         return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut [ราคา] ใหม่"
-
-    if usdthb and usdthb.get("pct") is not None:
-        arrow = f"{'🟢▲' if usdthb['pct'] >= 0 else '🔴▼'} {usdthb['pct']:+.2f}%"
-    else:
-        arrow = ""
-    return f"{manual['series']} จริง: {manual['price']:.4f} {arrow}".rstrip()
+    return f"{manual['series']} จริง: {manual['price']:.4f}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +401,8 @@ def format_message(d: dict, market: dict | None) -> str:
     if score:
         breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
         lines.append(f"   ⤷ {breakdown}")
-    lines.append(format_manual_fut_line(fetch_manual_fut_price(), d.get("USDTHB")))
     cip = compute_cip_fair(d, market)
+    lines.append(format_fut_line(cip))
     lines.append(f"Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "Futures ยุติธรรม: N/A ⚠️")
     lines.append(format_trend_line(market))
     lines += [
