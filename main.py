@@ -171,6 +171,56 @@ FETCHERS = {
 }
 
 
+def fetch_calendar() -> list | None:
+    """Forex Factory weekly calendar, relayed same-origin as usd/calendar.json
+    by the deepsleep456.com project (refreshed every 6h, see its
+    ff-calendar.yml workflow) -- read here to surface the next high-impact
+    event as a catalyst line instead of duplicating that scrape."""
+    try:
+        resp = requests.get("https://deepsleep456.com/usd/calendar.json", timeout=15)
+        resp.raise_for_status()
+        return resp.json().get("events") or []
+    except Exception as e:
+        print(f"  [FAIL -> omit catalyst] calendar.json: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
+# Short, generic directional read for USD data surprises -- strong USD data
+# historically pushes DXY up, which (same logic as compute_thb_score's DXY
+# factor) weakens THB; weak data does the opposite. Good enough as a
+# one-line heads-up, not a precise per-event call.
+CATALYST_DIRECTION_HINT = "👉 แข็งแกร่ง/Hawkish → บาทอ่อน (USD/THB ขึ้น) | อ่อนแอ/Dovish → บาทแข็ง (USD/THB ลง)"
+
+
+def format_catalyst_line(events: list | None) -> str | None:
+    """Nearest upcoming High-impact USD event (the biggest USD/THB movers --
+    FOMC, CPI, NFP, GDP, etc.), with a countdown and a generic hawkish/dovish
+    -> baht direction hint appended per the user's request. Returns None if
+    there's no such event in the feed (short lookahead window) or the feed
+    is unreachable."""
+    if not events:
+        return None
+    now = datetime.now(timezone.utc)
+    upcoming = []
+    for e in events:
+        if e.get("impact") != "High" or e.get("country") != "USD":
+            continue
+        try:
+            when = datetime.fromisoformat(e["date"])
+        except Exception:
+            continue
+        if when > now:
+            upcoming.append((when, e["title"]))
+    if not upcoming:
+        return None
+    when, title = min(upcoming, key=lambda x: x[0])
+    delta = when - now
+    hours = delta.total_seconds() / 3600
+    countdown = f"{delta.days}d {hours % 24:.0f}h" if delta.days else f"{hours:.0f}h"
+    when_th = when.astimezone(ZoneInfo("Asia/Bangkok")).strftime("%d %b %H:%M")
+    return f"🗞 Catalyst: {title} ในอีก {countdown} ({when_th} TH)\n   {CATALYST_DIRECTION_HINT}"
+
+
 def fetch_market_data_json() -> dict | None:
     """PMI levels + Thai/US policy rates aren't scraped by this project --
     pull the already-published usd/market-data.json from the deepsleep456.com
@@ -475,6 +525,10 @@ def format_message(d: dict, market: dict | None) -> str:
     signal = compute_trade_signal(score, market, cip, live_fut)
     if signal:
         lines.append(signal)
+
+    catalyst = format_catalyst_line(fetch_calendar())
+    if catalyst:
+        lines.append(catalyst)
 
     lines.append("ดูสด: deepsleep456.com/usd")
     return "\n".join(lines)
