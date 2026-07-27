@@ -350,13 +350,15 @@ def fetch_manual_fut_price() -> dict | None:
         return None
 
 
-def format_fut_line(cip: dict | None) -> str:
+FUT_BASIS_THRESHOLD = 0.03  # THB, same RICH/CHEAP/FAIR band as telegram_dr_bot.py's cmd_fut
+
+
+def format_fut_line(cip: dict | None, live: dict | None) -> str:
     """Compact line matching the other asset lines' style (label: value
     arrow %change) for the real, live-traded TFEX USD futures price. Falls
     back to the last manually-reported price (with its age) only if the
     live TradingView feed is unreachable."""
     series = cip["series"] if cip else "USD futures"
-    live = fetch_tfex_usd_futures()
     if live:
         arrow = f"{'🟢▲' if live['pct'] >= 0 else '🔴▼'} {live['pct']:+.2f}%"
         return f"{series} จริง: {live['price']:.4f} {arrow}"
@@ -372,6 +374,54 @@ def format_fut_line(cip: dict | None) -> str:
     if age_hours is not None and age_hours > MANUAL_FUT_STALE_HOURS:
         return f"{manual['series']} จริง: ข้อมูลเก่า ({age_hours/24:.1f} วัน) — ส่ง /fut [ราคา] ใหม่"
     return f"{manual['series']} จริง: {manual['price']:.4f}"
+
+
+def compute_trade_signal(score: dict | None, market: dict | None, cip: dict | None, live: dict | None) -> str | None:
+    """Combines the three directional inputs already in the message -- THB
+    strength Score, USD/THB EMA20/50 trend, and futures basis vs CIP fair
+    value -- into one long/short read for USD/THB (equivalently: TFEX USD
+    futures), instead of leaving the reader to reconcile them by eye.
+
+    Each input votes LONG or SHORT USD/THB (abstains if neutral/unavailable):
+      - Score >= +15 -> THB strengthening -> SHORT; <= -15 -> LONG
+      - EMA20/50: uptrend -> LONG; downtrend -> SHORT
+      - Basis: futures RICH (>fair by threshold) -> SHORT (expect reversion
+        down); CHEAP -> LONG
+    3/3 or 2/3 agreement -> directional call; otherwise -> NEUTRAL/WAIT."""
+    votes = []
+    reasons = []
+
+    if score and abs(score["score"]) >= 15:
+        d_ = "SHORT" if score["score"] > 0 else "LONG"
+        votes.append(d_)
+        reasons.append(f"Score {d_}")
+
+    trend = (market or {}).get("usdthb_trend")
+    if trend:
+        d_ = "LONG" if trend["direction"] == "up" else "SHORT"
+        votes.append(d_)
+        reasons.append(f"Trend {d_}")
+
+    if cip and live:
+        basis = live["price"] - cip["fair"]
+        if abs(basis) > FUT_BASIS_THRESHOLD:
+            d_ = "SHORT" if basis > 0 else "LONG"
+            votes.append(d_)
+            reasons.append(f"Basis {'RICH' if basis > 0 else 'CHEAP'}->{d_}")
+
+    longs, shorts = votes.count("LONG"), votes.count("SHORT")
+    total = len(votes)
+    if total < 2:
+        return None  # one lone vote isn't enough to call a direction
+
+    if shorts == 0:
+        return f"📌 สัญญาณ: 🟢 LONG USD/THB (เห็นตรงกัน {total}/{total}: {', '.join(reasons)})"
+    if longs == 0:
+        return f"📌 สัญญาณ: 🔴 SHORT USD/THB (เห็นตรงกัน {total}/{total}: {', '.join(reasons)})"
+    if longs != shorts:
+        lean = "LONG" if longs > shorts else "SHORT"
+        return f"📌 สัญญาณ: ⚪ เอียง {lean} ({longs}L/{shorts}S: {', '.join(reasons)})"
+    return f"📌 สัญญาณ: ⚪ สัญญาณขัดแย้ง — รอความชัดเจน ({', '.join(reasons)})"
 
 
 # ---------------------------------------------------------------------------
@@ -402,8 +452,13 @@ def format_message(d: dict, market: dict | None) -> str:
         breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
         lines.append(f"   ⤷ {breakdown}")
     cip = compute_cip_fair(d, market)
-    lines.append(format_fut_line(cip))
+    live_fut = fetch_tfex_usd_futures()
+    lines.append(format_fut_line(cip, live_fut))
     lines.append(f"Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "Futures ยุติธรรม: N/A ⚠️")
+    if cip and live_fut:
+        basis = live_fut["price"] - cip["fair"]
+        verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
+        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
     lines.append(format_trend_line(market))
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
@@ -416,6 +471,10 @@ def format_message(d: dict, market: dict | None) -> str:
     if us and th:
         spread = us["last"] - th["last"]
         lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
+
+    signal = compute_trade_signal(score, market, cip, live_fut)
+    if signal:
+        lines.append(signal)
 
     lines.append("ดูสด: deepsleep456.com/usd")
     return "\n".join(lines)
