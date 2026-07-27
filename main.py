@@ -162,6 +162,7 @@ FETCHERS = {
     # name: (callable, kwargs, unit, decimals)
     "DXY":    (fetch_yfinance, {"ticker": "DX-Y.NYB"}, "", 2),
     "GOLD":   (fetch_yfinance, {"ticker": "GC=F"}, " $", 1),
+    "USOIL":  (fetch_yfinance, {"ticker": "CL=F"}, " $", 2),
     "US10Y":  (fetch_yfinance, {"ticker": "^TNX"}, "%", 3),
     "USDTHB": (fetch_yfinance, {"ticker": "THB=X"}, "", 3),
     "TH10Y":  (scrape_tradingeconomics,
@@ -252,7 +253,10 @@ def fetch_all() -> dict:
 # ---------------------------------------------------------------------------
 # 1b) THB STRENGTH SCORE + CIP FUTURES FAIR VALUE
 # (same formulas/weights/defaults as usd/index.html's recalc()/recalcAnchors()
-#  on the deepsleep456.com/usd dashboard -- kept in sync manually)
+#  on the deepsleep456.com/usd dashboard -- kept in sync manually, EXCEPT the
+#  Oil factor below, which is main.py-only for now: Thailand is a net oil
+#  importer, so a pricier import bill weakens THB -- same negative-correlation
+#  shape as DXY, just not yet ported to the website widget.)
 # ---------------------------------------------------------------------------
 def _clamp3(x: float) -> float:
     return max(-3.0, min(3.0, x))
@@ -263,15 +267,18 @@ def compute_thb_score(d: dict, market: dict | None) -> dict | None:
     if not (dxy and gold and us10y and th10y):
         return None
 
-    v_dxy, v_xau, v_bdi = 0.35, 1.0, 2.0
+    v_dxy, v_xau, v_bdi, v_oil = 0.35, 1.0, 2.0, 1.5
     spr_neutral, spr_scale = 1.50, 0.75
-    w = {"DXY": 0.60, "XAU": 0.17, "SPR": 0.22, "BDI": 0.10, "PMI": 0.15}
+    w = {"DXY": 0.60, "XAU": 0.17, "SPR": 0.22, "BDI": 0.10, "PMI": 0.15, "OIL": 0.10}
 
     s_dxy = _clamp3(-dxy["pct"] / v_dxy) if dxy.get("pct") is not None else 0.0
     s_xau = _clamp3(gold["pct"] / v_xau) if gold.get("pct") is not None else 0.0
     spread = us10y["last"] - th10y["last"]
     s_spr = _clamp3(-(spread - spr_neutral) / spr_scale)
     s_bdi = _clamp3(bdi["pct"] / v_bdi) if (bdi and bdi.get("pct") is not None) else 0.0
+
+    oil = d.get("USOIL")
+    s_oil = _clamp3(-oil["pct"] / v_oil) if (oil and oil.get("pct") is not None) else 0.0
 
     s_pmi = 0.0
     pmi = {k: (market or {}).get(f"pmi_{k}") for k in ("cn", "th", "in", "us")}
@@ -285,6 +292,7 @@ def compute_thb_score(d: dict, market: dict | None) -> dict | None:
         "Gold": w["XAU"] * s_xau,
         "Spread": w["SPR"] * s_spr,
         "BDI": w["BDI"] * s_bdi,
+        "Oil": w["OIL"] * s_oil,
         "PMI": w["PMI"] * s_pmi,
     }
     total = sum(contrib.values())
@@ -516,6 +524,7 @@ def format_message(d: dict, market: dict | None) -> str:
         _line("US10Y", d.get("US10Y"), "🇺🇸 US10Y"),
         _line("TH10Y", d.get("TH10Y"), "🇹🇭 TH10Y"),
         _line("BDI", d.get("BDI"), "🚢 BDI"),
+        _line("USOIL", d.get("USOIL"), "🛢️ US Oil"),
     ]
     us, th = d.get("US10Y"), d.get("TH10Y")
     if us and th:
