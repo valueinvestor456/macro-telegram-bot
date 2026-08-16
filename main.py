@@ -53,9 +53,12 @@ _load_dotenv()
 # CONFIG — set env vars TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID, or paste here
 # ---------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "PASTE_YOUR_BOT_TOKEN_HERE")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "PASTE_YOUR_CHAT_ID_HERE")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-SEND_TIMES = ["08:00", "10:00", "14:00", "16:00"]
+# If CHAT_ID not set, auto-detect from first message
+AUTO_DETECT_CHAT_ID_PATH = Path(__file__).with_name("telegram_chat_id.json")
+
+SEND_TIMES = ["09:45", "10:00", "11:00", "14:00", "15:00", "16:00", "16:15", "19:30", "20:30"]
 TIMEZONE = "Asia/Bangkok"
 
 BROWSER_HEADERS = {
@@ -64,6 +67,31 @@ BROWSER_HEADERS = {
         "(KHTML, like Gecko) Chrome/126.0 Safari/537.36"
     )
 }
+
+
+# Auto-detect chat ID from first message if not configured
+def get_auto_chat_id() -> str:
+    """Load auto-detected chat ID from file if available."""
+    if AUTO_DETECT_CHAT_ID_PATH.exists():
+        try:
+            data = json.loads(AUTO_DETECT_CHAT_ID_PATH.read_text(encoding="utf-8"))
+            return str(data.get("chat_id", ""))
+        except Exception:
+            pass
+    return ""
+
+
+def save_auto_chat_id(chat_id: int) -> None:
+    """Save auto-detected chat ID to file."""
+    try:
+        AUTO_DETECT_CHAT_ID_PATH.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
+    except Exception as e:
+        print(f"[telegram] failed to save auto-detect chat_id: {e}", file=sys.stderr)
+
+
+# Use configured CHAT_ID or fall back to auto-detected one
+_CONFIGURED_CHAT_ID = TELEGRAM_CHAT_ID
+_AUTO_CHAT_ID = get_auto_chat_id()
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +344,12 @@ TFEX_QUARTER_MONTHS = [3, 6, 9, 12]
 MONTH_CODE_BY_IDX = {0: "F", 1: "G", 2: "H", 3: "J", 4: "K", 5: "M",
                       6: "N", 7: "Q", 8: "U", 9: "V", 10: "X", 11: "Z"}
 
+# Front-month rolls to the next quarterly contract once within ~2 months of
+# the current one's settlement -- liquidity shifts to the next quarter well
+# before expiry in practice, so treating the current quarter as "front" all
+# the way to its settlement date overstates how long it stays the active one.
+TFEX_ROLL_BUFFER_DAYS = 60
+
 
 def next_tfex_settlement(today: date | None = None) -> tuple[date, int, int]:
     today = today or date.today()
@@ -326,7 +360,7 @@ def next_tfex_settlement(today: date | None = None) -> tuple[date, int, int]:
                 continue
             last_day = calendar.monthrange(y, m)[1]
             settlement = date(y, m, last_day) - timedelta(days=2)
-            if settlement >= today:
+            if settlement - timedelta(days=TFEX_ROLL_BUFFER_DAYS) >= today:
                 return settlement, y, m
         y += 1
 
@@ -364,6 +398,31 @@ def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
     return {"fair": cip_fair, "series": series}
 
 
+def compute_cip_fair_fixed(d: dict, market: dict | None, month: int) -> dict | None:
+    """CIP fair value for a fixed TFEX USD contract (e.g., Sep=9, Dec=12)."""
+    usdthb = d.get("USDTHB")
+    if not usdthb or not market:
+        return None
+    i_th = (market.get("th_rate") or {}).get("last")
+    i_us = (market.get("us_rate") or {}).get("last")
+    if i_th is None or i_us is None:
+        return None
+
+    today = date.today()
+    y = today.year
+    if month < today.month:
+        y += 1
+
+    last_day = calendar.monthrange(y, month)[1]
+    settlement = date(y, month, last_day) - timedelta(days=2)
+
+    days = max((settlement - today).days, 1)
+    t = days / 365.0
+    cip_fair = usdthb["last"] * (1 + i_th / 100 * t) / (1 + i_us / 100 * t)
+    series = f"USD{MONTH_CODE_BY_IDX[month - 1]}{y % 100:02d}"
+    return {"fair": cip_fair, "series": series}
+
+
 MANUAL_FUT_STALE_HOURS = 48
 
 
@@ -389,6 +448,27 @@ def fetch_tfex_usd_futures() -> dict | None:
         return {"price": close, "pct": pct}
     except Exception as e:
         print(f"  [FAIL -> fall back to manual futures price] scanner.tradingview.com: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_tfex_usd_futures_dated(series: str) -> dict | None:
+    """Fetch live price for a specific TFEX USD futures contract (dated).
+    series: e.g., "USDZ2026" for Dec 2026 contract."""
+    try:
+        ticker = f"TFEX:{series}"
+        resp = requests.post(
+            "https://scanner.tradingview.com/global/scan",
+            json={"symbols": {"tickers": [ticker]}, "columns": ["close", "change"]},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("data") or []
+        if not rows:
+            return None
+        close, pct = rows[0]["d"]
+        return {"price": close, "pct": pct}
+    except Exception as e:
+        print(f"  [FAIL -> omit {series} live price] scanner.tradingview.com: {type(e).__name__}: {e}", file=sys.stderr)
         return None
 
 
@@ -509,14 +589,41 @@ def format_message(d: dict, market: dict | None) -> str:
     if score:
         breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
         lines.append(f"   ⤷ {breakdown}")
-    cip = compute_cip_fair(d, market)
-    live_fut = fetch_tfex_usd_futures()
-    lines.append(format_fut_line(cip, live_fut))
-    lines.append(f"Futures ยุติธรรม ({cip['series']}): {cip['fair']:.4f}" if cip else "Futures ยุติธรรม: N/A ⚠️")
-    if cip and live_fut:
-        basis = live_fut["price"] - cip["fair"]
+
+    # USDU26 (Sep 2026)
+    cip_u = compute_cip_fair_fixed(d, market, 9)
+    live_fut_u = fetch_tfex_usd_futures_dated("USDU26")
+    if live_fut_u and cip_u:
+        arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'} {live_fut_u['pct']:+.2f}%"
+        lines.append(f"USDU26 จริง: {live_fut_u['price']:.4f} / มูลค่ายุติธรรม: {cip_u['fair']:.4f} {arrow}")
+        basis = live_fut_u["price"] - cip_u["fair"]
         verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
         lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+    elif live_fut_u and not cip_u:
+        arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'} {live_fut_u['pct']:+.2f}%"
+        lines.append(f"USDU26 จริง: {live_fut_u['price']:.4f} / มูลค่ายุติธรรม: N/A ⚠️ {arrow}")
+    elif cip_u and not live_fut_u:
+        lines.append(f"USDU26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: {cip_u['fair']:.4f}")
+    else:
+        lines.append("USDU26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
+
+    # USDZ26 (Dec 2026)
+    cip_z = compute_cip_fair_fixed(d, market, 12)
+    live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
+    if live_fut_z and cip_z:
+        arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'} {live_fut_z['pct']:+.2f}%"
+        lines.append(f"USDZ26 จริง: {live_fut_z['price']:.4f} / มูลค่ายุติธรรม: {cip_z['fair']:.4f} {arrow}")
+        basis = live_fut_z["price"] - cip_z["fair"]
+        verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
+        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+    elif live_fut_z and not cip_z:
+        arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'} {live_fut_z['pct']:+.2f}%"
+        lines.append(f"USDZ26 จริง: {live_fut_z['price']:.4f} / มูลค่ายุติธรรม: N/A ⚠️ {arrow}")
+    elif cip_z and not live_fut_z:
+        lines.append(f"USDZ26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: {cip_z['fair']:.4f}")
+    else:
+        lines.append("USDZ26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
+
     lines.append(format_trend_line(market))
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
@@ -531,7 +638,7 @@ def format_message(d: dict, market: dict | None) -> str:
         spread = us["last"] - th["last"]
         lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
 
-    signal = compute_trade_signal(score, market, cip, live_fut)
+    signal = compute_trade_signal(score, market, cip_u, live_fut_u)
     if signal:
         lines.append(signal)
 
@@ -640,14 +747,16 @@ def check_forecast_alert() -> str | None:
 
 
 def send_telegram(text: str) -> bool:
-    if "PASTE_YOUR" in TELEGRAM_BOT_TOKEN or "PASTE_YOUR" in TELEGRAM_CHAT_ID:
+    global _AUTO_CHAT_ID
+    chat_id = _CONFIGURED_CHAT_ID or _AUTO_CHAT_ID
+    if not chat_id or "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
         print("[telegram] token/chat_id not configured — printing message instead:\n")
         print(text)
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         # parse_mode HTML so the <pre> forecast table renders monospace/aligned
-        resp = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}, timeout=30)
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=30)
         resp.raise_for_status()
         print("[telegram] sent OK")
         return True
@@ -664,7 +773,180 @@ def job():
 
 
 # ---------------------------------------------------------------------------
-# 3) SCHEDULER
+# 3) COMMAND HANDLERS (POLLING)
+# ---------------------------------------------------------------------------
+UPDATE_OFFSET_PATH = Path(__file__).with_name("telegram_update_offset.json")
+
+
+def get_last_update_offset() -> int:
+    """Load last processed update_id to avoid re-processing messages."""
+    if UPDATE_OFFSET_PATH.exists():
+        try:
+            data = json.loads(UPDATE_OFFSET_PATH.read_text(encoding="utf-8"))
+            return data.get("offset", 0)
+        except Exception:
+            pass
+    return 0
+
+
+def save_last_update_offset(offset: int) -> None:
+    """Persist the last update_id so we only fetch new messages."""
+    try:
+        UPDATE_OFFSET_PATH.write_text(json.dumps({"offset": offset}), encoding="utf-8")
+    except Exception as e:
+        print(f"[telegram] failed to save offset: {e}", file=sys.stderr)
+
+
+def format_usd_futures() -> str:
+    """Format real-time USDU26 and USDZ26 prices + fair values + score."""
+    try:
+        print("[usd cmd] fetching market data...", file=sys.stdout, flush=True)
+        # Fetch data
+        data = fetch_all()
+        market = fetch_market_data_json()
+
+        print(f"[usd cmd] fetched {len([v for v in data.values() if v])} assets, market={'ok' if market else 'failed'}", file=sys.stdout, flush=True)
+
+        # Calculate score
+        score = compute_thb_score(data, market)
+        score_line = f"Score {score['score']:+.0f} {score['short_verdict']}" if score else "Score N/A"
+
+        lines = [f"📊 USD Futures — {datetime.now().strftime('%d/%m/%Y %H:%M')} (TH) {score_line}"]
+        
+        # USDU26 (Sep 2026) - typically SHORT bias
+        cip_u = compute_cip_fair_fixed(data, market, 9)
+        live_fut_u = fetch_tfex_usd_futures_dated("USDU26")
+        
+        if live_fut_u and cip_u:
+            arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'}{live_fut_u['pct']:+.2f}%"
+            lines.append(f"USDU26 (Real/Fair): {live_fut_u['price']:.4f} / {cip_u['fair']:.4f} {arrow} Short")
+        elif live_fut_u or cip_u:
+            price_str = f"{live_fut_u['price']:.4f}" if live_fut_u else "N/A"
+            fair_str = f"{cip_u['fair']:.4f}" if cip_u else "N/A"
+            lines.append(f"USDU26 (Real/Fair): {price_str} / {fair_str} Short")
+        else:
+            lines.append("USDU26 (Real/Fair): N/A / N/A")
+        
+        # USDZ26 (Dec 2026) - typically LONG bias
+        cip_z = compute_cip_fair_fixed(data, market, 12)
+        live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
+        
+        if live_fut_z and cip_z:
+            arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'}{live_fut_z['pct']:+.2f}%"
+            lines.append(f"USDZ26 (Real/Fair): {live_fut_z['price']:.4f} / {cip_z['fair']:.4f} {arrow} Long")
+        elif live_fut_z or cip_z:
+            price_str = f"{live_fut_z['price']:.4f}" if live_fut_z else "N/A"
+            fair_str = f"{cip_z['fair']:.4f}" if cip_z else "N/A"
+            lines.append(f"USDZ26 (Real/Fair): {price_str} / {fair_str} Long")
+        else:
+            lines.append("USDZ26 (Real/Fair): N/A / N/A")
+        
+        print("[usd cmd] formatted successfully, returning message", file=sys.stdout, flush=True)
+        return "\n".join(lines)
+    except Exception as e:
+        print(f"[usd cmd] ERROR: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return f"❌ Error fetching USD futures: {type(e).__name__}: {str(e)[:150]}"
+
+
+def get_telegram_updates() -> list:
+    """Poll Telegram for new messages using getUpdates."""
+    if "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
+        return []
+    
+    offset = get_last_update_offset()
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    try:
+        resp = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35)
+        resp.raise_for_status()
+        return resp.json().get("result", [])
+    except Exception as e:
+        print(f"[telegram] getUpdates failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return []
+
+
+def handle_command(chat_id: str, command: str) -> None:
+    """Handle incoming Telegram commands."""
+    try:
+        print(f"[telegram] handling command: {command} from {chat_id}", file=sys.stdout, flush=True)
+        if command == "/usd":
+            print(f"[telegram] fetching USD futures data...", file=sys.stdout, flush=True)
+            text = format_usd_futures()
+            print(f"[telegram] formatted message, sending reply...", file=sys.stdout, flush=True)
+            send_telegram_reply(chat_id, text)
+        elif command in ["/start", "/help"]:
+            help_text = "📌 Available commands:\n/usd — Check USDU26 & USDZ26 real-time prices & fair values\n/help — Show this message"
+            send_telegram_reply(chat_id, help_text)
+        else:
+            print(f"[telegram] unknown command: {command} from {chat_id}", file=sys.stdout, flush=True)
+    except Exception as e:
+        print(f"[telegram] handle_command error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        send_telegram_reply(chat_id, f"Error: {type(e).__name__}: {str(e)[:100]}")
+
+
+def send_telegram_reply(chat_id: str, text: str) -> bool:
+    """Send a reply to a specific chat_id."""
+    print(f"[reply] attempting to send to {chat_id}...", file=sys.stdout, flush=True)
+    if "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
+        print(f"[reply] token not configured, printing instead:\n{text[:100]}...", file=sys.stdout, flush=True)
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        print(f"[reply] POST to {url}", file=sys.stdout, flush=True)
+        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=30)
+        print(f"[reply] status code: {resp.status_code}", file=sys.stdout, flush=True)
+        resp.raise_for_status()
+        print(f"[reply] ✓ sent to {chat_id} successfully", file=sys.stdout, flush=True)
+        return True
+    except Exception as e:
+        print(f"[reply] ✗ FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+
+def poll_commands() -> None:
+    """Poll and process incoming Telegram messages/commands."""
+    global _AUTO_CHAT_ID
+    try:
+        updates = get_telegram_updates()
+        if not updates:
+            print(f"[poll] no updates (offset: {get_last_update_offset()})", flush=True)
+            return
+
+        print(f"[poll] got {len(updates)} update(s)", flush=True)
+        for update in updates:
+            offset = update.get("update_id", 0)
+            message = update.get("message", {})
+            text = message.get("text", "").strip()
+            chat_id = message.get("chat", {}).get("id")
+            
+            # Auto-detect chat ID from first message if not configured
+            if chat_id and not _CONFIGURED_CHAT_ID and not _AUTO_CHAT_ID:
+                print(f"[telegram] auto-detected chat_id: {chat_id}")
+                save_auto_chat_id(chat_id)
+                _AUTO_CHAT_ID = str(chat_id)
+            
+            if text and chat_id:
+                print(f"[msg] received: '{text}' from chat_id: {chat_id}", flush=True)
+                if text.startswith("/"):
+                    print(f"[msg] command detected, handling...", flush=True)
+                    handle_command(str(chat_id), text)
+                else:
+                    print(f"[msg] not a command, ignoring", flush=True)
+            else:
+                print(f"[telegram] no text or chat_id: text='{text}', chat_id={chat_id}")
+            
+            # Always save the offset, even if we didn't process a command
+            if offset:
+                save_last_update_offset(offset + 1)
+    except Exception as e:
+        print(f"[telegram] poll_commands error: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# 4) SCHEDULER
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
@@ -677,11 +959,14 @@ def main():
 
     for t in SEND_TIMES:
         schedule.every().day.at(t, TIMEZONE).do(job)
-    print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE}) — Ctrl+C to stop")
+    print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE}) — polling for /usd commands — Ctrl+C to stop")
+    print(f"  09:45, 10:00, 11:00, 14:00, 15:00, 16:00, 16:15, 19:30, 20:30")
 
+    print("[bot] starting polling loop — waiting for /usd commands...", flush=True)
     while True:
         schedule.run_pending()
-        time.sleep(30)
+        poll_commands()
+        time.sleep(5)  # poll every 5 seconds for commands
 
 
 if __name__ == "__main__":

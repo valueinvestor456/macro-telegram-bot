@@ -1,0 +1,40 @@
+name: Scheduled Macro Summary Send
+
+on:
+  schedule:
+    # Times in UTC (Bangkok is UTC+7)
+    - cron: '45 02 * * *'   # 09:45 Bangkok
+    - cron: '00 03 * * *'   # 10:00 Bangkok
+    - cron: '00 04 * * *'   # 11:00 Bangkok
+    - cron: '00 07 * * *'   # 14:00 Bangkok
+    - cron: '00 08 * * *'   # 15:00 Bangkok
+    - cron: '00 09 * * *'   # 16:00 Bangkok
+    - cron: '15 09 * * *'   # 16:15 Bangkok
+    - cron: '30 12 * * *'   # 19:30 Bangkok
+    - cron: '30 13 * * *'   # 20:30 Bangkok
+
+  # Allow manual trigger from Actions tab
+  workflow_dispatch:
+
+jobs:
+  send-macro-summary:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Send Macro Summary
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --once

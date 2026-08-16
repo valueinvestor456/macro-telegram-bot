@@ -54,3 +54,33 @@ python main.py           # รันค้างไว้ ส่งอัตโ�
 - เวลา schedule ใช้ timezone `Asia/Bangkok` โดยตรง เครื่องไม่จำเป็นต้องตั้งเวลาไทย
 - สคริปต์ต้องรันค้างไว้ (เครื่องเปิด + ไม่ sleep) — ถ้าต้องการให้ส่งแม้เครื่องปิด
   ค่อยย้ายไปรันบน cloud (เช่น GitHub Actions cron / VPS) ภายหลัง
+
+## การใช้ GitHub Actions (การส่งแบบกำหนดการ บน Cloud ฟรี)
+
+หากต้องการให้บอทส่งสรุปอัตโนมัติแม้ PC ปิด สามารถใช้ GitHub Actions ฟรี:
+
+1. **Push ขึ้น GitHub**:
+   ```bash
+   cd d:\VSCODE\macro-telegram-bot
+   git add .
+   git commit -m "Add GitHub Actions scheduled send"
+   git push
+   ```
+
+2. **เพิ่ม Secrets ใน GitHub**:
+   - ไปที่ repo → Settings → Secrets and variables → Actions
+   - Click "New repository secret"
+   - เพิ่ม 2 secrets:
+     - `TELEGRAM_BOT_TOKEN` = `1234567890:AAF...xyz` (token จาก @BotFather)
+     - `TELEGRAM_CHAT_ID` = `123456789` (chat ID จาก getUpdates)
+
+3. **ตรวจสอบ Workflow**:
+   - ไปที่ repo → Actions
+   - เลือก "Scheduled Macro Summary Send"
+   - Workflow จะรันอัตโนมัติตามเวลา (09:45, 10:00, 11:00, 14:00, 15:00, 16:00, 16:15, 19:30, 20:30 เวลาไทย)
+   - หรือคลิก "Run workflow" → "Run workflow" เพื่อทดสอบทันที
+
+**หมายเหตุ**:
+- GitHub Actions ฟรี — ไม่มีค่าใช้จ่าย
+- Workflow รันเฉพาะการส่งแบบกำหนดการ (ไม่มี `/usd` reply แบบ real-time)
+- สำหรับ `/usd` command replies ต้องให้บอทรันบน PC หรือ VPS 24/7

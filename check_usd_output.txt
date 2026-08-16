@@ -1,0 +1,27 @@
+---/usd---
+📊 USD Futures — 18:15 Score -1 บาทอ่อนค่า
+USDU26 (Real/Fair): 33.0300 / 32.9335 🟢▲+0.03% Short
+USDZ26 (Real/Fair): 32.7400 / 32.7088 🔴▼-0.03% Long
+
+---scheduled---
+📊 Macro Summary — 12/08/2026 18:15 (TH)
+
+💱 USD/THB: 33.050  🟢▲ +0.21%
+🎯 Score -1 บาทอ่อนค่า
+   ⤷ DXY -0.05  Gold +0.33  Spread -0.33  BDI +0.00  Oil -0.02  PMI +0.06
+USDU26 จริง: 33.0300 / มูลค่ายุติธรรม: 32.9335 🟢▲ +0.03%
+Basis: +0.0965 THB 🔴 RICH
+USDZ26 จริง: 32.7400 / มูลค่ายุติธรรม: 32.7088 🔴▼ -0.03%
+Basis: +0.0312 THB 🔴 RICH
+🟢 Uptrend (EMA20 33.275 > EMA50 33.161)
+💵 DXY: 99.85  🟢▲ +0.03%
+🥇 Gold: 4,469.3 $  🟢▲ +1.97%
+🇺🇸 US10Y: 4.684%  🔴▼ -0.32%
+🇹🇭 TH10Y: 2.050%  🟢▲ +0.00%
+🚢 BDI: 3,046  🟢▲ +0.00%
+🛢️ US Oil: 83.46 $  🟢▲ +0.31%
+↔️ Spread US−TH: +2.63% 🔴 (outflow risk)
+📌 สัญญาณ: ⚪ สัญญาณขัดแย้ง — รอความชัดเจน (Trend LONG, Basis RICH->SHORT)
+🗞 Catalyst: Core CPI m/m ในอีก 1h (12 Aug 19:30 TH)
+   👉 แข็งแกร่ง/Hawkish → บาทอ่อน (USD/THB ขึ้น) | อ่อนแอ/Dovish → บาทแข็ง (USD/THB ลง)
+ดูสด: deepsleep456.com/usd
