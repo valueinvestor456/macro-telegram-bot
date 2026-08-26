@@ -772,6 +772,162 @@ def job():
     send_telegram(format_message(data, market))
 
 
+def format_usdz26_message(d: dict, market: dict | None) -> str:
+    """USDZ26-focused macro summary (Dec 2026 futures)."""
+    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    score = compute_thb_score(d, market)
+    score_line = f"🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "🎯 Score N/A ⚠️"
+
+    lines = [
+        f"📊 Macro Summary (USDZ26) — {now} (TH)",
+        "",
+        _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
+        score_line,
+    ]
+    if score:
+        breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
+        lines.append(f"   ⤷ {breakdown}")
+
+    # USDZ26 (Dec 2026) - focus
+    cip_z = compute_cip_fair_fixed(d, market, 12)
+    live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
+    if live_fut_z and cip_z:
+        arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'} {live_fut_z['pct']:+.2f}%"
+        lines.append(f"USDZ26 จริง: {live_fut_z['price']:.4f} {arrow}")
+        lines.append(f"Futures ยุติธรรม: {cip_z['fair']:.4f}")
+        basis = live_fut_z["price"] - cip_z["fair"]
+        verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
+        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+    elif live_fut_z or cip_z:
+        price_str = f"{live_fut_z['price']:.4f}" if live_fut_z else "N/A"
+        fair_str = f"{cip_z['fair']:.4f}" if cip_z else "N/A"
+        lines.append(f"USDZ26 จริง: {price_str}")
+        lines.append(f"Futures ยุติธรรม: {fair_str}")
+    else:
+        lines.append("USDZ26 จริง: N/A ⚠️")
+        lines.append("Futures ยุติธรรม: N/A ⚠️")
+
+    lines.append(format_trend_line(market))
+    lines += [
+        _line("DXY", d.get("DXY"), "💵 DXY"),
+        _line("GOLD", d.get("GOLD"), "🥇 Gold"),
+        _line("US10Y", d.get("US10Y"), "🇺🇸 US10Y"),
+        _line("TH10Y", d.get("TH10Y"), "🇹🇭 TH10Y"),
+        _line("BDI", d.get("BDI"), "🚢 BDI"),
+        _line("USOIL", d.get("USOIL"), "🛢️ US Oil"),
+    ]
+    us, th = d.get("US10Y"), d.get("TH10Y")
+    if us and th:
+        spread = us["last"] - th["last"]
+        lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
+
+    signal = compute_trade_signal(score, market, cip_z, live_fut_z)
+    if signal:
+        lines.append(signal)
+
+    catalyst = format_catalyst_line(fetch_calendar())
+    if catalyst:
+        lines.append(catalyst)
+
+    lines.append("ดูสด: deepsleep456.com/usd")
+    return "\n".join(lines)
+
+
+def job_usdz26():
+    print(f"\n=== fetching USDZ26 @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    data = fetch_all()
+    market = fetch_market_data_json()
+    send_telegram(format_usdz26_message(data, market))
+
+
+def fetch_stock_research() -> list | None:
+    """Fetch Thai stock research updates from stock.gapfocus.com."""
+    try:
+        url = "https://stock.gapfocus.com/research"
+        resp = requests.get(url, headers=BROWSER_HEADERS, timeout=30)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Extract research items (adjust selectors based on actual page structure)
+        items = []
+        for article in soup.find_all("div", class_=["research-item", "article", "post"]):
+            title_elem = article.find(["h2", "h3", "a"])
+            if title_elem:
+                title = title_elem.get_text(strip=True)
+                link = article.find("a")
+                href = link.get("href", "") if link else ""
+                if title and len(items) < 5:
+                    items.append({"title": title, "link": href})
+
+        return items if items else None
+    except Exception as e:
+        print(f"  [FAIL -> omit stock research] stock.gapfocus.com: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
+def fetch_ipo_stocks() -> list | None:
+    """Fetch IPO & recent stock offerings from market.sec.or.th."""
+    try:
+        url = "https://market.sec.or.th/public/idisc/th/r59"
+        resp = requests.get(url, headers=BROWSER_HEADERS, timeout=30)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Extract IPO/stock offering info (adjust selectors based on actual page structure)
+        items = []
+        for row in soup.find_all("tr"):
+            cells = row.find_all("td")
+            if len(cells) >= 3:
+                ticker = cells[0].get_text(strip=True)
+                name = cells[1].get_text(strip=True)
+                price = cells[2].get_text(strip=True)
+                if ticker and len(items) < 5:
+                    items.append({"ticker": ticker, "name": name, "price": price})
+
+        return items if items else None
+    except Exception as e:
+        print(f"  [FAIL -> omit IPO stocks] market.sec.or.th: {type(e).__name__}: {e}", file=sys.stderr)
+        return None
+
+
+def format_stock_message() -> str:
+    """Format Thai stock research & IPO updates."""
+    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    lines = [
+        f"📈 Thai Stock Updates — {now} (TH)",
+        "",
+        "🔍 Research Highlights:",
+    ]
+
+    research = fetch_stock_research()
+    if research:
+        for i, item in enumerate(research, 1):
+            link_text = f" — {item['link']}" if item.get('link') else ""
+            lines.append(f"{i}. {item['title']}{link_text}")
+    else:
+        lines.append("• No updates available")
+
+    lines.append("")
+    lines.append("💰 IPO & Market Offerings (SEC):")
+
+    ipo = fetch_ipo_stocks()
+    if ipo:
+        for i, stock in enumerate(ipo, 1):
+            lines.append(f"{i}. **{stock['ticker']}** — {stock['name']} @ {stock['price']}")
+    else:
+        lines.append("• No IPO updates available")
+
+    lines.append("")
+    lines.append("📊 Sources: stock.gapfocus.com | market.sec.or.th")
+    return "\n".join(lines)
+
+
+def job_stocks():
+    print(f"\n=== fetching stocks @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    message = format_stock_message()
+    send_telegram(message)
+
+
 # ---------------------------------------------------------------------------
 # 3) COMMAND HANDLERS (POLLING)
 # ---------------------------------------------------------------------------
@@ -959,8 +1115,14 @@ def main():
 
     for t in SEND_TIMES:
         schedule.every().day.at(t, TIMEZONE).do(job)
-    print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE}) — polling for /usd commands — Ctrl+C to stop")
-    print(f"  09:45, 10:00, 11:00, 14:00, 15:00, 16:00, 16:15, 19:30, 20:30")
+        schedule.every().day.at(t, TIMEZONE).do(job_usdz26)
+        schedule.every().day.at(t, TIMEZONE).do(job_stocks)
+    print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
+    print(f"  — USDU26 macro summary")
+    print(f"  — USDZ26 macro summary")
+    print(f"  — Thai stock updates (research & IPO)")
+    print(f"  — polling for /usd commands")
+    print(f"  — Ctrl+C to stop")
 
     print("[bot] starting polling loop — waiting for /usd commands...", flush=True)
     while True:
