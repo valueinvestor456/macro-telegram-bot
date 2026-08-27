@@ -1,0 +1,32 @@
+name: Telegram Bot Polling Loop
+
+on:
+  schedule:
+    # Run every 5 hours to handle restarts (GitHub has 6-hour job timeout)
+    - cron: '0 */5 * * *'
+
+  workflow_dispatch:
+
+jobs:
+  poll-telegram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330  # 5.5 hours (slightly under 6-hour limit)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run polling loop
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
