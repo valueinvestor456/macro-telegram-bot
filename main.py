@@ -755,8 +755,11 @@ def send_telegram(text: str) -> bool:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        # parse_mode HTML so the <pre> forecast table renders monospace/aligned
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=30)
+        payload = {"chat_id": chat_id, "text": text}
+        # only use HTML mode if message contains actual HTML tags (for <pre> forecast table)
+        if "<pre>" in text:
+            payload["parse_mode"] = "HTML"
+        resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
         print("[telegram] sent OK")
         return True
@@ -1050,7 +1053,10 @@ def send_telegram_reply(chat_id: str, text: str) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         print(f"[reply] POST to {url}", file=sys.stdout, flush=True)
-        resp = requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"}, timeout=30)
+        payload = {"chat_id": chat_id, "text": text}
+        if "<pre>" in text:
+            payload["parse_mode"] = "HTML"
+        resp = requests.post(url, json=payload, timeout=30)
         print(f"[reply] status code: {resp.status_code}", file=sys.stdout, flush=True)
         resp.raise_for_status()
         print(f"[reply] ✓ sent to {chat_id} successfully", file=sys.stdout, flush=True)
