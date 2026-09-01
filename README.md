@@ -84,3 +84,41 @@ python main.py           # รันค้างไว้ ส่งอัตโ�
 - GitHub Actions ฟรี — ไม่มีค่าใช้จ่าย
 - Workflow รันเฉพาะการส่งแบบกำหนดการ (ไม่มี `/usd` reply แบบ real-time)
 - สำหรับ `/usd` command replies ต้องให้บอทรันบน PC หรือ VPS 24/7
+
+## 🔧 Troubleshooting: บอทไม่ส่งข้อความ
+
+ถ้าบอทหยุดส่งข้อความนาน ให้ตรวจสอบตามนี้:
+
+### 1. **ตรวจสอบ Workflow Status ใน GitHub**
+   - ไปที่ repo → Actions
+   - ดูส่วน "Scheduled Macro Summary Send" 
+   - ถ้า workflow เป็นสีเหลืองหรือแดง = มีปัญหา (คลิกดูรายละเอียด)
+   - ถ้าหายไป = **GitHub Actions อาจถูกปิด** หรือ **Secrets หายไป**
+
+### 2. **ตรวจสอบ Secrets ใน GitHub**
+   - ไปที่ Settings → Secrets and variables → Actions
+   - ต้องมี 2 secrets:
+     - ✅ `TELEGRAM_BOT_TOKEN` (ต้องไม่ว่าง)
+     - ✅ `TELEGRAM_CHAT_ID` (ต้องไม่ว่าง)
+   - ถ้าหายไป = **เพิ่มใหม่** ตามขั้นตอน "GitHub Actions" ด้านบน
+
+### 3. **ทดสอบด้วย Manual Trigger**
+   - ไปที่ repo → Actions → "Scheduled Macro Summary Send"
+   - คลิก "Run workflow" → "Run workflow"
+   - รอให้ workflow จบ (5-10 วินาที)
+   - ตรวจสอบ:
+     - ✅ Workflow เสร็จสีเขียว = OK ค่าใช้ได้
+     - ❌ ล้มเหลว = ดูรายละเอียด error ที่ step "Send Macro Summary"
+
+### 4. **ถ้าทั้งหมดดูดี แต่ยังไม่ส่ง**
+   - Workflow อาจถูกปิดโดย GitHub (ไม่มี commit เกิน 60 วัน)
+   - ✅ **วิธีแก้**: Push commit ใหม่ (แม้แต่การเปลี่ยนแปลงเล็กน้อย) จะเปิด workflow ใหม่
+   - ตัวอย่าง:
+     ```bash
+     echo "# Bot active - $(date)" >> README.md
+     git add README.md && git commit -m "Keep workflow active" && git push
+     ```
+
+### 5. **ตรวจสอบเวลา Cron ถูกต้อง**
+   - Workflow ตั้งเวลา UTC และแปลงเป็นเวลาไทย (UTC+7)
+   - ถ้าดูเหมือนเวลาผิด ให้ตรวจสอบ `.github/workflows/scheduled-send.yml`
