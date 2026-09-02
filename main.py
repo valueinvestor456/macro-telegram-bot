@@ -750,21 +750,25 @@ def send_telegram(text: str) -> bool:
     global _AUTO_CHAT_ID
     chat_id = _CONFIGURED_CHAT_ID or _AUTO_CHAT_ID
     if not chat_id or "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
-        print("[telegram] token/chat_id not configured — printing message instead:\n")
+        print("[telegram] ERROR: token/chat_id not configured", file=sys.stderr)
+        print(f"[telegram] TELEGRAM_BOT_TOKEN exists: {bool(TELEGRAM_BOT_TOKEN and 'PASTE_YOUR' not in TELEGRAM_BOT_TOKEN)}")
+        print(f"[telegram] TELEGRAM_CHAT_ID configured: {bool(_CONFIGURED_CHAT_ID)}")
+        print(f"[telegram] auto-detected chat_id: {bool(_AUTO_CHAT_ID)}")
+        print("[telegram] printing message instead:\n")
         print(text)
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        payload = {"chat_id": chat_id, "text": text}
+        payload = {"chat_id": str(chat_id), "text": text}
         # only use HTML mode if message contains actual HTML tags (for <pre> forecast table)
         if "<pre>" in text:
             payload["parse_mode"] = "HTML"
         resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
-        print("[telegram] sent OK")
+        print(f"[telegram] sent OK to chat_id={chat_id}")
         return True
     except Exception as e:
-        print(f"[telegram] send FAILED: {e}", file=sys.stderr)
+        print(f"[telegram] send FAILED to chat_id={chat_id}: {e}", file=sys.stderr)
         return False
 
 
