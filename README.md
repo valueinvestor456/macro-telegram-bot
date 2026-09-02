@@ -1,7 +1,9 @@
 # Macro Telegram Bot
 
 สคริปต์ Python ดึงข้อมูลมหภาค (DXY, Gold, US10Y, TH10Y, USD/THB, BDI) แล้วส่งสรุปเข้า
-Telegram อัตโนมัติทุกวันเวลา 08:00, 10:00, 14:00, 16:00 (เวลาไทย)
+Telegram อัตโนมัติทุกวันเวลา 09:45, 10:00, 11:00, 14:00, 15:00, 16:00, 16:15, 19:30, 20:30 (เวลาไทย)
+
+**Bot Status**: ✅ Active — scheduled sends via GitHub Actions
 
 ## ติดตั้ง
 
