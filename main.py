@@ -769,6 +769,8 @@ def send_telegram(text: str) -> bool:
         return True
     except Exception as e:
         print(f"[telegram] send FAILED to chat_id={chat_id}: {e}", file=sys.stderr)
+        if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+            print(f"[telegram] response body: {e.response.text}", file=sys.stderr)
         return False
 
 
