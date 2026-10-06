@@ -16,6 +16,7 @@ import calendar
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -453,9 +454,14 @@ def fetch_tfex_usd_futures() -> dict | None:
 
 def fetch_tfex_usd_futures_dated(series: str) -> dict | None:
     """Fetch live price for a specific TFEX USD futures contract (dated).
-    series: e.g., "USDZ2026" for Dec 2026 contract."""
+    series: e.g., "USDZ26" or "USDZ2026" for Dec 2026 contract."""
     try:
-        ticker = f"TFEX:{series}"
+        match = re.fullmatch(r"(USD[FGHJKMNQUVXZ])(\d{2}|\d{4})", series.strip().upper())
+        if not match:
+            print(f"  [WARN -> omit {series} live price] invalid TFEX USD series", file=sys.stderr)
+            return None
+        prefix, year = match.groups()
+        ticker = f"TFEX:{prefix}{'20' if len(year) == 2 else ''}{year}"
         resp = requests.post(
             "https://scanner.tradingview.com/global/scan",
             json={"symbols": {"tickers": [ticker]}, "columns": ["close", "change"]},
