@@ -83,7 +83,8 @@ def canonical_url(url):
 def fetch(url):
     # Browser-compatible TLS is required by SEC; ordinary urllib connections
     # are closed by the server on some networks. Certificate checks stay on.
-    response = requests.get(url, impersonate='chrome', timeout=25)
+    response = requests.get(url, impersonate='chrome', timeout=25,
+                            headers={'Accept-Language': 'th-TH,th;q=0.9,en;q=0.8'})
     response.raise_for_status()
     return response.text
 
@@ -218,7 +219,7 @@ def parse_set(html, url, today):
     body = text(soup)
     match = re.search(r'วันที่/เวลา\s+(.+?)\s+แชร์', body)
     if not match:
-        raise ValueError('SET publication timestamp missing')
+        raise ValueError('SET publication timestamp missing; page starts: ' + body[:180])
     published = thai_date(match[1])
     if not 0 <= (today - published).days <= 3:
         return None
@@ -256,7 +257,7 @@ def collect(today=None):
                     if event:
                         events.append(event)
                 except Exception as exc:
-                    print(f'[stocks] SET detail: {type(exc).__name__}')
+                    print(f'[stocks] SET detail: {type(exc).__name__}: {exc}')
                     errors.append('ประกาศ SET บางรายการ')
         except Exception as exc:
             print(f'[stocks] SET discovery: {type(exc).__name__}')
