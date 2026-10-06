@@ -399,7 +399,7 @@ def compute_cip_fair(d: dict, market: dict | None) -> dict | None:
 
 
 def compute_cip_fair_fixed(d: dict, market: dict | None, month: int) -> dict | None:
-    """CIP fair value for a fixed TFEX USD contract (e.g., Sep=9, Dec=12)."""
+    """CIP fair value for a fixed TFEX USD contract (e.g., Mar=3, Dec=12)."""
     usdthb = d.get("USDTHB")
     if not usdthb or not market:
         return None
@@ -590,24 +590,7 @@ def format_message(d: dict, market: dict | None) -> str:
         breakdown = "  ".join(f"{k} {v:+.2f}" for k, v in score["contrib"].items())
         lines.append(f"   ⤷ {breakdown}")
 
-    # USDU26 (Sep 2026)
-    cip_u = compute_cip_fair_fixed(d, market, 9)
-    live_fut_u = fetch_tfex_usd_futures_dated("USDU26")
-    if live_fut_u and cip_u:
-        arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'} {live_fut_u['pct']:+.2f}%"
-        lines.append(f"USDU26 จริง: {live_fut_u['price']:.4f} / มูลค่ายุติธรรม: {cip_u['fair']:.4f} {arrow}")
-        basis = live_fut_u["price"] - cip_u["fair"]
-        verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
-        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
-    elif live_fut_u and not cip_u:
-        arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'} {live_fut_u['pct']:+.2f}%"
-        lines.append(f"USDU26 จริง: {live_fut_u['price']:.4f} / มูลค่ายุติธรรม: N/A ⚠️ {arrow}")
-    elif cip_u and not live_fut_u:
-        lines.append(f"USDU26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: {cip_u['fair']:.4f}")
-    else:
-        lines.append("USDU26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
-
-    # USDZ26 (Dec 2026)
+    # USDZ26 (Dec 2026) — current contract
     cip_z = compute_cip_fair_fixed(d, market, 12)
     live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
     if live_fut_z and cip_z:
@@ -624,6 +607,23 @@ def format_message(d: dict, market: dict | None) -> str:
     else:
         lines.append("USDZ26 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
 
+    # USDH27 (Mar 2027) — next contract
+    cip_h = compute_cip_fair_fixed(d, market, 3)
+    live_fut_h = fetch_tfex_usd_futures_dated("USDH27")
+    if live_fut_h and cip_h:
+        arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'} {live_fut_h['pct']:+.2f}%"
+        lines.append(f"USDH27 จริง: {live_fut_h['price']:.4f} / มูลค่ายุติธรรม: {cip_h['fair']:.4f} {arrow}")
+        basis = live_fut_h["price"] - cip_h["fair"]
+        verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
+        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+    elif live_fut_h and not cip_h:
+        arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'} {live_fut_h['pct']:+.2f}%"
+        lines.append(f"USDH27 จริง: {live_fut_h['price']:.4f} / มูลค่ายุติธรรม: N/A ⚠️ {arrow}")
+    elif cip_h and not live_fut_h:
+        lines.append(f"USDH27 จริง: N/A ⚠️ / มูลค่ายุติธรรม: {cip_h['fair']:.4f}")
+    else:
+        lines.append("USDH27 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
+
     lines.append(format_trend_line(market))
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
@@ -638,7 +638,7 @@ def format_message(d: dict, market: dict | None) -> str:
         spread = us["last"] - th["last"]
         lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
 
-    signal = compute_trade_signal(score, market, cip_u, live_fut_u)
+    signal = compute_trade_signal(score, market, cip_z, live_fut_z)
     if signal:
         lines.append(signal)
 
@@ -963,7 +963,7 @@ def save_last_update_offset(offset: int) -> None:
 
 
 def format_usd_futures() -> str:
-    """Format real-time USDU26 and USDZ26 prices + fair values + score."""
+    """Format real-time USDZ26 and USDH27 prices + fair values + score."""
     try:
         print("[usd cmd] fetching market data...", file=sys.stdout, flush=True)
         # Fetch data
@@ -977,35 +977,35 @@ def format_usd_futures() -> str:
         score_line = f"Score {score['score']:+.0f} {score['short_verdict']}" if score else "Score N/A"
 
         lines = [f"📊 USD Futures — {datetime.now().strftime('%d/%m/%Y %H:%M')} (TH) {score_line}"]
-        
-        # USDU26 (Sep 2026) - typically SHORT bias
-        cip_u = compute_cip_fair_fixed(data, market, 9)
-        live_fut_u = fetch_tfex_usd_futures_dated("USDU26")
-        
-        if live_fut_u and cip_u:
-            arrow = f"{'🟢▲' if live_fut_u['pct'] >= 0 else '🔴▼'}{live_fut_u['pct']:+.2f}%"
-            lines.append(f"USDU26 (Real/Fair): {live_fut_u['price']:.4f} / {cip_u['fair']:.4f} {arrow} Short")
-        elif live_fut_u or cip_u:
-            price_str = f"{live_fut_u['price']:.4f}" if live_fut_u else "N/A"
-            fair_str = f"{cip_u['fair']:.4f}" if cip_u else "N/A"
-            lines.append(f"USDU26 (Real/Fair): {price_str} / {fair_str} Short")
-        else:
-            lines.append("USDU26 (Real/Fair): N/A / N/A")
-        
-        # USDZ26 (Dec 2026) - typically LONG bias
+
+        # USDZ26 (Dec 2026) - current contract
         cip_z = compute_cip_fair_fixed(data, market, 12)
         live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
-        
+
         if live_fut_z and cip_z:
             arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'}{live_fut_z['pct']:+.2f}%"
-            lines.append(f"USDZ26 (Real/Fair): {live_fut_z['price']:.4f} / {cip_z['fair']:.4f} {arrow} Long")
+            lines.append(f"USDZ26 (Real/Fair): {live_fut_z['price']:.4f} / {cip_z['fair']:.4f} {arrow}")
         elif live_fut_z or cip_z:
             price_str = f"{live_fut_z['price']:.4f}" if live_fut_z else "N/A"
             fair_str = f"{cip_z['fair']:.4f}" if cip_z else "N/A"
-            lines.append(f"USDZ26 (Real/Fair): {price_str} / {fair_str} Long")
+            lines.append(f"USDZ26 (Real/Fair): {price_str} / {fair_str}")
         else:
             lines.append("USDZ26 (Real/Fair): N/A / N/A")
-        
+
+        # USDH27 (Mar 2027) - next contract
+        cip_h = compute_cip_fair_fixed(data, market, 3)
+        live_fut_h = fetch_tfex_usd_futures_dated("USDH27")
+
+        if live_fut_h and cip_h:
+            arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'}{live_fut_h['pct']:+.2f}%"
+            lines.append(f"USDH27 (Real/Fair): {live_fut_h['price']:.4f} / {cip_h['fair']:.4f} {arrow}")
+        elif live_fut_h or cip_h:
+            price_str = f"{live_fut_h['price']:.4f}" if live_fut_h else "N/A"
+            fair_str = f"{cip_h['fair']:.4f}" if cip_h else "N/A"
+            lines.append(f"USDH27 (Real/Fair): {price_str} / {fair_str}")
+        else:
+            lines.append("USDH27 (Real/Fair): N/A / N/A")
+
         print("[usd cmd] formatted successfully, returning message", file=sys.stdout, flush=True)
         return "\n".join(lines)
     except Exception as e:
@@ -1041,7 +1041,7 @@ def handle_command(chat_id: str, command: str) -> None:
             print(f"[telegram] formatted message, sending reply...", file=sys.stdout, flush=True)
             send_telegram_reply(chat_id, text)
         elif command in ["/start", "/help"]:
-            help_text = "📌 Available commands:\n/usd — Check USDU26 & USDZ26 real-time prices & fair values\n/help — Show this message"
+            help_text = "📌 Available commands:\n/usd — Check USDZ26 & USDH27 real-time prices & fair values\n/help — Show this message"
             send_telegram_reply(chat_id, help_text)
         else:
             print(f"[telegram] unknown command: {command} from {chat_id}", file=sys.stdout, flush=True)
@@ -1130,7 +1130,7 @@ def main():
         schedule.every().day.at(t, TIMEZONE).do(job_usdz26)
         schedule.every().day.at(t, TIMEZONE).do(job_stocks)
     print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
-    print(f"  — USDU26 macro summary")
+    print(f"  — USDZ26 current-contract macro summary")
     print(f"  — USDZ26 macro summary")
     print(f"  — Thai stock updates (research & IPO)")
     print(f"  — polling for /usd commands")
