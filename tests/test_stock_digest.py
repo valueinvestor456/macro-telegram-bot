@@ -87,6 +87,12 @@ class ParsingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             sd.parse_set('headline without official date', url, TODAY)
 
+    def test_set_english_date_on_thai_page_from_overseas_runner(self):
+        html = ('วันที่/เวลา 06 Oct 2026 17:01:00 แชร์ หัวข้อข่าว การได้มาซึ่งบริษัทย่อยแห่งใหม่ '
+                'หลักทรัพย์ TEST แหล่งข่าว TEST')
+        url = 'https://www.set.or.th/th/market/news-and-alert/newsdetails?id=123'
+        self.assertEqual(sd.parse_set(html, url, TODAY).published, TODAY)
+
 
 class SelectionTests(unittest.TestCase):
     def test_duplicate_rows_and_previous_sends(self):
