@@ -771,7 +771,10 @@ def send_telegram(text: str) -> bool:
             payload["parse_mode"] = "HTML"
         resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
-        print(f"[telegram] sent OK to chat_id={chat_id}")
+        if not resp.json().get("ok"):
+            print("[telegram] API did not confirm delivery", file=sys.stderr)
+            return False
+        print("[telegram] sent OK")
         return True
     except Exception as e:
         print(f"[telegram] send FAILED to chat_id={chat_id}: {e}", file=sys.stderr)
@@ -855,92 +858,9 @@ def job_usdz26():
     send_telegram(format_usdz26_message(data, market))
 
 
-def fetch_stock_research() -> list | None:
-    """Fetch Thai stock research updates from stock.gapfocus.com."""
-    try:
-        url = "https://stock.gapfocus.com/research"
-        resp = requests.get(url, headers=BROWSER_HEADERS, timeout=30)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Extract research items (adjust selectors based on actual page structure)
-        items = []
-        for article in soup.find_all("div", class_=["research-item", "article", "post"]):
-            title_elem = article.find(["h2", "h3", "a"])
-            if title_elem:
-                title = title_elem.get_text(strip=True)
-                link = article.find("a")
-                href = link.get("href", "") if link else ""
-                if title and len(items) < 5:
-                    items.append({"title": title, "link": href})
-
-        return items if items else None
-    except Exception as e:
-        print(f"  [FAIL -> omit stock research] stock.gapfocus.com: {type(e).__name__}: {e}", file=sys.stderr)
-        return None
-
-
-def fetch_ipo_stocks() -> list | None:
-    """Fetch IPO & recent stock offerings from market.sec.or.th."""
-    try:
-        url = "https://market.sec.or.th/public/idisc/th/r59"
-        resp = requests.get(url, headers=BROWSER_HEADERS, timeout=30)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Extract IPO/stock offering info (adjust selectors based on actual page structure)
-        items = []
-        for row in soup.find_all("tr"):
-            cells = row.find_all("td")
-            if len(cells) >= 3:
-                ticker = cells[0].get_text(strip=True)
-                name = cells[1].get_text(strip=True)
-                price = cells[2].get_text(strip=True)
-                if ticker and len(items) < 5:
-                    items.append({"ticker": ticker, "name": name, "price": price})
-
-        return items if items else None
-    except Exception as e:
-        print(f"  [FAIL -> omit IPO stocks] market.sec.or.th: {type(e).__name__}: {e}", file=sys.stderr)
-        return None
-
-
-def format_stock_message() -> str:
-    """Format Thai stock research & IPO updates."""
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
-    lines = [
-        f"📈 Thai Stock Updates — {now} (TH)",
-        "",
-        "🔍 Research Highlights:",
-    ]
-
-    research = fetch_stock_research()
-    if research:
-        for i, item in enumerate(research, 1):
-            link_text = f" — {item['link']}" if item.get('link') else ""
-            lines.append(f"{i}. {item['title']}{link_text}")
-    else:
-        lines.append("• No updates available")
-
-    lines.append("")
-    lines.append("💰 IPO & Market Offerings (SEC):")
-
-    ipo = fetch_ipo_stocks()
-    if ipo:
-        for i, stock in enumerate(ipo, 1):
-            lines.append(f"{i}. **{stock['ticker']}** — {stock['name']} @ {stock['price']}")
-    else:
-        lines.append("• No IPO updates available")
-
-    lines.append("")
-    lines.append("📊 Sources: stock.gapfocus.com | market.sec.or.th")
-    return "\n".join(lines)
-
-
 def job_stocks():
-    print(f"\n=== fetching stocks @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
-    message = format_stock_message()
-    send_telegram(message)
+    from stock_digest import run_digest
+    run_digest(send_telegram)
 
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1045,16 @@ def poll_commands() -> None:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="run one fetch+send now, then exit")
+    parser.add_argument("--stocks", action="store_true", help="run Thai Stock Updates only")
+    parser.add_argument("--dry-run", action="store_true", help="preview stocks without sending or saving state")
     args = parser.parse_args()
+
+    if args.stocks:
+        from stock_digest import run_digest
+        run_digest(send_telegram, dry_run=args.dry_run)
+        return
+    if args.dry_run:
+        parser.error("--dry-run requires --stocks")
 
     if args.once:
         job()
@@ -1134,11 +1063,14 @@ def main():
     for t in SEND_TIMES:
         schedule.every().day.at(t, TIMEZONE).do(job)
         schedule.every().day.at(t, TIMEZONE).do(job_usdz26)
-        schedule.every().day.at(t, TIMEZONE).do(job_stocks)
+    # GitHub has a dedicated daily stock workflow with persistent dedup state.
+    # Local installations send one digest daily instead of repeating nine times.
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        schedule.every().day.at("20:30", TIMEZONE).do(job_stocks)
     print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
     print(f"  — USDZ26 current-contract macro summary")
     print(f"  — USDZ26 macro summary")
-    print(f"  — Thai stock updates (research & IPO)")
+    print("  — Thai Stock Updates: verified disclosures, daily 20:30 TH")
     print(f"  — polling for /usd commands")
     print(f"  — Ctrl+C to stop")
 

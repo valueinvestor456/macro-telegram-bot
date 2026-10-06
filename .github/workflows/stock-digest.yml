@@ -1,0 +1,56 @@
+name: Thai Stock Updates
+
+on:
+  schedule:
+    - cron: '30 13 * * *' # 20:30 Asia/Bangkok
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview only (no Telegram send or state update)
+        type: boolean
+        default: true
+
+concurrency:
+  group: thai-stock-digest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Test stock parsing and delivery
+        run: python -m unittest discover -s tests -v
+      - uses: actions/cache/restore@v4
+        id: state
+        with:
+          path: stock_digest_state.json
+          key: stock-digest-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            stock-digest-v1-${{ github.ref_name }}-
+      - name: Fetch and send or preview
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STOCK_WATCHLIST: ${{ vars.STOCK_WATCHLIST }}
+          STOCK_MIN_INSIDER_VALUE: ${{ vars.STOCK_MIN_INSIDER_VALUE || '1000000' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            python main.py --stocks --dry-run
+          else
+            python main.py --stocks
+          fi
+      - uses: actions/cache/save@v4
+        if: ${{ success() && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) && hashFiles('stock_digest_state.json') != '' }}
+        with:
+          path: stock_digest_state.json
+          key: stock-digest-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
