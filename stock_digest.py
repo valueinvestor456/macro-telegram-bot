@@ -26,6 +26,8 @@ GAP = 'https://stock.gapfocus.com/'
 STATE_PATH = Path(__file__).with_name('stock_digest_state.json')
 MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
           'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
+EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+             'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 # These are screening rules, not investment recommendations.
 CATEGORIES = [
@@ -52,10 +54,11 @@ def thai_date(value: str) -> date:
     if numeric:
         day, month, year = map(int, numeric.groups())
     else:
-        match = re.search(r'(\d{1,2})\s+(' + '|'.join(map(re.escape, MONTHS)) + r')\s+(\d{4})', value)
+        month_names = MONTHS + EN_MONTHS
+        match = re.search(r'(\d{1,2})\s+(' + '|'.join(map(re.escape, month_names)) + r')\s+(\d{4})', value, re.I)
         if not match:
             raise ValueError('Source date missing')
-        day, month, year = int(match[1]), MONTHS.index(match[2]) + 1, int(match[3])
+        day, month, year = int(match[1]), [m.lower() for m in month_names].index(match[2].lower()) % 12 + 1, int(match[3])
     return date(year - 543 if year > 2400 else year, month, day)
 
 
@@ -220,7 +223,10 @@ def parse_set(html, url, today):
     match = re.search(r'วันที่/เวลา\s+(.+?)\s+แชร์', body)
     if not match:
         raise ValueError('SET publication timestamp missing; page starts: ' + body[:180])
-    published = thai_date(match[1])
+    try:
+        published = thai_date(match[1])
+    except ValueError as exc:
+        raise ValueError('SET timestamp unrecognized: ' + match[1][:100]) from exc
     if not 0 <= (today - published).days <= 3:
         return None
     heading = re.search(r'หัวข้อข่าว\s+(.+?)\s+หลักทรัพย์\s+([A-Z0-9&.\-]+)\s+แหล่งข่าว', body)
