@@ -70,6 +70,12 @@ BROWSER_HEADERS = {
 }
 
 
+def format_th_timestamp(now: datetime | None = None) -> str:
+    """Format a timestamp in Thailand time, regardless of the runner timezone."""
+    now = now or datetime.now(ZoneInfo(TIMEZONE))
+    return now.astimezone(ZoneInfo(TIMEZONE)).strftime("%d/%m/%Y %H:%M")
+
+
 # Auto-detect chat ID from first message if not configured
 def get_auto_chat_id() -> str:
     """Load auto-detected chat ID from file if available."""
@@ -582,7 +588,7 @@ def _line(name: str, data: dict | None, label: str) -> str:
 
 
 def format_message(d: dict, market: dict | None) -> str:
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = format_th_timestamp()
     score = compute_thb_score(d, market)
     score_line = f"🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "🎯 Score N/A ⚠️"
 
@@ -784,7 +790,7 @@ def send_telegram(text: str) -> bool:
 
 
 def job():
-    print(f"\n=== fetching @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    print(f"\n=== fetching @ {datetime.now(ZoneInfo(TIMEZONE)):%Y-%m-%d %H:%M:%S} ===")
     data = fetch_all()
     market = fetch_market_data_json()
     send_telegram(format_message(data, market))
@@ -792,7 +798,7 @@ def job():
 
 def format_usdz26_message(d: dict, market: dict | None) -> str:
     """USDZ26-focused macro summary (Dec 2026 futures)."""
-    now = datetime.now().strftime("%d/%m/%Y %H:%M")
+    now = format_th_timestamp()
     score = compute_thb_score(d, market)
     score_line = f"🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "🎯 Score N/A ⚠️"
 
@@ -852,7 +858,7 @@ def format_usdz26_message(d: dict, market: dict | None) -> str:
 
 
 def job_usdz26():
-    print(f"\n=== fetching USDZ26 @ {datetime.now():%Y-%m-%d %H:%M:%S} ===")
+    print(f"\n=== fetching USDZ26 @ {datetime.now(ZoneInfo(TIMEZONE)):%Y-%m-%d %H:%M:%S} ===")
     data = fetch_all()
     market = fetch_market_data_json()
     send_telegram(format_usdz26_message(data, market))
@@ -902,7 +908,7 @@ def format_usd_futures() -> str:
         score = compute_thb_score(data, market)
         score_line = f"Score {score['score']:+.0f} {score['short_verdict']}" if score else "Score N/A"
 
-        lines = [f"📊 USD Futures — {datetime.now().strftime('%d/%m/%Y %H:%M')} (TH) {score_line}"]
+        lines = [f"📊 USD Futures — {format_th_timestamp()} (TH) {score_line}"]
 
         # USDZ26 (Dec 2026) - current contract
         cip_z = compute_cip_fair_fixed(data, market, 12)
