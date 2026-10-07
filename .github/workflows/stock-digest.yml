@@ -2,7 +2,7 @@ name: Thai Stock Updates
 
 on:
   schedule:
-    - cron: '30 13 * * *' # 20:30 Asia/Bangkok
+    - cron: '0 2,7 * * *' # 09:00 and 14:00 Asia/Bangkok
   workflow_dispatch:
     inputs:
       dry_run:

@@ -1064,13 +1064,14 @@ def main():
         schedule.every().day.at(t, TIMEZONE).do(job)
         schedule.every().day.at(t, TIMEZONE).do(job_usdz26)
     # GitHub has a dedicated daily stock workflow with persistent dedup state.
-    # Local installations send one digest daily instead of repeating nine times.
+    # Local installations use the same two stock rounds as GitHub.
     if os.environ.get("GITHUB_ACTIONS") != "true":
-        schedule.every().day.at("20:30", TIMEZONE).do(job_stocks)
+        for stock_time in ("09:00", "14:00"):
+            schedule.every().day.at(stock_time, TIMEZONE).do(job_stocks)
     print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
     print(f"  — USDZ26 current-contract macro summary")
     print(f"  — USDZ26 macro summary")
-    print("  — Thai Stock Updates: verified disclosures, daily 20:30 TH")
+    print("  — Thai Stock Updates: material disclosures, daily 09:00 / 14:00 TH")
     print(f"  — polling for /usd commands")
     print(f"  — Ctrl+C to stop")
 
