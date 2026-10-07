@@ -33,19 +33,15 @@ if %errorlevel% neq 0 (
 echo [OK] Dependencies installed
 echo.
 
-REM Create .env file if it doesn't exist
+REM Require a private local .env file; never embed credentials in this script.
 if not exist .env (
-    echo [CREATING] .env file with credentials...
-    (
-        echo TELEGRAM_BOT_TOKEN=8992498329:AAFO5twl-mf1DZYGwazn3G-6STnhEfFqf1c
-        echo TELEGRAM_CHAT_ID=8601040026
-    ) > .env
-    echo [OK] .env file created
-) else (
-    echo [OK] .env file already exists
+    echo [ERROR] .env file is missing.
+    echo Create it using the instructions in README.md.
+    pause
+    exit /b 1
 )
+echo [OK] Private .env file found
 echo.
-
 REM Delete old offset file to start fresh
 if exist telegram_update_offset.json (
     del telegram_update_offset.json

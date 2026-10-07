@@ -76,6 +76,9 @@ pip install -r requirements.txt
    ⚠️ `.env` อยู่ใน `.gitignore` แล้ว — **ห้าม commit ไฟล์นี้ขึ้น git หรือแชร์ token
    ให้ใคร** ใครมี token ก็ส่งข้อความผ่านบอทเราได้เลย ถ้า token หลุดให้คุยกับ
    @BotFather พิมพ์ `/revoke` เพื่อออก token ใหม่
+   หาก token เคยอยู่ในไฟล์ที่ track ด้วย git ให้ถือว่ารั่วแล้ว แม้ลบออกจากไฟล์ปัจจุบัน
+   ก็ยังอยู่ในประวัติ commit: ให้ revoke ผ่าน @BotFather แล้วเปลี่ยนทั้ง `.env` และ
+   GitHub Actions secret `TELEGRAM_BOT_TOKEN` ก่อนเปิด poller ใหม่
 
 ## ใช้งาน
 
