@@ -7,6 +7,10 @@ on:
 
   workflow_dispatch:
 
+concurrency:
+  group: telegram-bot-polling
+  cancel-in-progress: true
+
 jobs:
   poll-telegram:
     runs-on: ubuntu-latest
