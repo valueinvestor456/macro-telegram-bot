@@ -873,6 +873,8 @@ def job_stocks():
 # 3) COMMAND HANDLERS (POLLING)
 # ---------------------------------------------------------------------------
 UPDATE_OFFSET_PATH = Path(__file__).with_name("telegram_update_offset.json")
+_POLL_CONFLICT_COUNT = 0
+_POLL_CONFLICT_NOTIFIED = False
 
 
 def get_last_update_offset() -> int:
@@ -949,6 +951,7 @@ def format_usd_futures() -> str:
 
 def get_telegram_updates() -> list:
     """Poll Telegram for new messages using getUpdates."""
+    global _POLL_CONFLICT_COUNT, _POLL_CONFLICT_NOTIFIED
     if "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
         return []
     
@@ -957,9 +960,40 @@ def get_telegram_updates() -> list:
     try:
         resp = requests.get(url, params={"offset": offset, "timeout": 30}, timeout=35)
         resp.raise_for_status()
-        return resp.json().get("result", [])
-    except Exception as e:
-        print(f"[telegram] getUpdates failed: {type(e).__name__}: {e}", file=sys.stderr)
+        result = resp.json().get("result", [])
+        _POLL_CONFLICT_COUNT = 0
+        _POLL_CONFLICT_NOTIFIED = False
+        return result
+    except requests.HTTPError as e:
+        response = e.response
+        if response is not None and response.status_code == 409:
+            _POLL_CONFLICT_COUNT += 1
+            try:
+                payload = response.json()
+                description = payload.get("description", "") if isinstance(payload, dict) else ""
+            except ValueError:
+                description = ""
+            print(
+                "[telegram] getUpdates conflict (409): "
+                f"{description or 'another poller may be active'}",
+                file=sys.stderr,
+            )
+            if _POLL_CONFLICT_COUNT >= 3 and not _POLL_CONFLICT_NOTIFIED:
+                chat_id = TELEGRAM_CHAT_ID or _AUTO_CHAT_ID
+                if chat_id:
+                    _POLL_CONFLICT_NOTIFIED = True
+                    send_telegram_reply(
+                        str(chat_id),
+                        "⚠️ Telegram polling ขัดข้องต่อเนื่อง (HTTP 409). "
+                        "ตรวจให้เหลือ bot poller เพียงตัวเดียว: หยุด instance ซ้ำบน "
+                        "PC/VPS, Railway/Fly หรือ GitHub Actions แล้วลอง /usd อีกครั้ง",
+                    )
+        else:
+            status = response.status_code if response is not None else "unknown"
+            print(f"[telegram] getUpdates failed: HTTPError (status {status})", file=sys.stderr)
+        return []
+    except requests.RequestException as e:
+        print(f"[telegram] getUpdates failed: {type(e).__name__}", file=sys.stderr)
         return []
 
 

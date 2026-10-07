@@ -86,6 +86,12 @@ python main.py           # รันค้างไว้ ส่งอัตโ�
 
 ถ้ายังไม่ได้ใส่ token สคริปต์จะพิมพ์ข้อความลงจอแทนการส่งจริง — ใช้เช็ค format ได้เลย
 
+**สำคัญ:** `python main.py` ใช้ Telegram `getUpdates` สำหรับรับคำสั่ง และเปิดพร้อมกันได้
+เพียงหนึ่ง instance ต่อ bot token เท่านั้น ถ้าใช้ GitHub Actions `Telegram Bot Polling Loop`
+อยู่แล้ว ห้ามเปิดบอทซ้ำบน PC/VPS หรือ Railway/Fly ด้วย token เดียวกัน (และกลับกัน:
+ถ้าเลือก PC/VPS ให้ปิด polling workflow บน GitHub Actions) การเปิดซ้ำทำให้ Telegram
+ตอบ `409 Conflict` และคำสั่งอย่าง `/usd` จะไม่ถูกรับ
+
 ## แหล่งข้อมูล & ข้อจำกัด
 
 - DXY (`DX-Y.NYB`), Gold futures (`GC=F`), US10Y (`^TNX`), USD/THB (`THB=X`) — จาก
