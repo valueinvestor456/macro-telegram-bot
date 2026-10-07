@@ -2,10 +2,10 @@ name: Stock digest checks
 
 on:
   pull_request:
-    paths: ['main.py', 'stock_digest.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml']
+    paths: ['main.py', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml']
   push:
     branches: [main]
-    paths: ['main.py', 'stock_digest.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml']
+    paths: ['main.py', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml']
 
 permissions:
   contents: read
@@ -20,7 +20,7 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python -m py_compile main.py stock_digest.py
+      - run: python -m py_compile main.py stock_digest.py set_news.py
       - run: python -m unittest discover -s tests -v
       - name: Preview live sources without Telegram credentials
         run: python main.py --stocks --dry-run

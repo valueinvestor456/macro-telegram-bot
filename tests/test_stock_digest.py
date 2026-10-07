@@ -68,32 +68,6 @@ class ParsingTests(unittest.TestCase):
         self.assertIn('ฉบับแก้ไข', event.facts)
         self.assertIn('ยังไม่ยืนยัน', event.follow_up)
 
-    def test_discovery_ignores_news_rumours_and_deduplicates_links(self):
-        good = 'https://www.set.or.th/th/market/news-and-alert/newsdetails?id=123&amp;symbol=TEST'
-        html = ''.join(f'<div class="talk-row"><a href="{u}">news</a></div>'
-                       for u in [good, good, 'https://news.example/story', 'https://www.set.or.th.evil.test/story'])
-        self.assertEqual(len(sd.discover_set(html)), 1)
-        with self.assertRaises(ValueError):
-            sd.discover_set('<html>blocked</html>')
-
-    def test_set_requires_official_date_and_excludes_routine_calendar(self):
-        template = ('วันที่/เวลา 06 ต.ค. 2569 17:01:00 แชร์ หัวข้อข่าว {} '
-                    'หลักทรัพย์ TEST แหล่งข่าว TEST')
-        url = 'https://www.set.or.th/th/market/news-and-alert/newsdetails?id=123'
-        event = sd.parse_set(template.format('การได้มาซึ่งบริษัทย่อยแห่งใหม่'), url, TODAY)
-        self.assertEqual(event.priority, 85)
-        self.assertIn('ยังไม่ได้สรุปตัวเลข', event.follow_up)
-        self.assertIsNone(sd.parse_set(template.format('กำหนดวันประชุมสามัญผู้ถือหุ้น'), url, TODAY))
-        with self.assertRaises(ValueError):
-            sd.parse_set('headline without official date', url, TODAY)
-
-    def test_set_english_date_on_thai_page_from_overseas_runner(self):
-        html = ('วันที่/เวลา 06 Oct 2026 17:01:00 แชร์ หัวข้อข่าว การได้มาซึ่งบริษัทย่อยแห่งใหม่ '
-                'หลักทรัพย์ TEST แหล่งข่าว TEST')
-        url = 'https://www.set.or.th/th/market/news-and-alert/newsdetails?id=123'
-        self.assertEqual(sd.parse_set(html, url, TODAY).published, TODAY)
-
-
 class SelectionTests(unittest.TestCase):
     def test_duplicate_rows_and_previous_sends(self):
         self.assertEqual(len(sd.select_events([sample(), sample()], {'sent': {}})), 1)
@@ -119,11 +93,24 @@ class SelectionTests(unittest.TestCase):
         self.assertLessEqual(len(included), 5)
         self.assertNotIn(events[-1], included)
 
-    def test_empty_and_failed_sources_differ(self):
+    def test_empty_rounds_do_not_send_status_messages(self):
         self.assertEqual(sd.render([], []), ('', []))
-        msg, included = sd.render([], ['SEC แบบ 59'])
-        self.assertIn('ยังสรุปว่าไม่มีข่าวสำคัญไม่ได้', msg)
-        self.assertFalse(included)
+        self.assertEqual(sd.render([], ['SEC แบบ 59']), ('', []))
+
+    def test_only_ticker_headline_and_link_are_rendered(self):
+        event = sample()
+        event.headline = 'แจ้งการซื้อกิจการ'
+        msg, included = sd.render([event], ['SEC แบบ 59'])
+        self.assertIn('TEST — แจ้งการซื้อกิจการ\n' + event.url, msg)
+        self.assertNotIn(event.facts, msg)
+        self.assertNotIn(event.follow_up, msg)
+        self.assertNotIn(event.category, msg)
+        self.assertEqual(included, [event])
+
+    def test_recent_news_precedes_older_high_priority_news(self):
+        old, recent = sample('old', priority=100), sample('recent', priority=70)
+        old.published = date(2026, 10, 1)
+        self.assertEqual(sd.select_events([old, recent], {'sent': {}}), [recent, old])
 
 
 class DeliveryTests(unittest.TestCase):
@@ -156,11 +143,12 @@ class DeliveryTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
     @patch('stock_digest.collect', return_value=([], ['SEC แบบ 59']))
-    def test_health_notice_once_per_day(self, collect):
+    def test_failed_sources_raise_without_sending_or_advancing_state(self, collect):
         send = Mock(return_value=True)
-        sd.run_digest(send, state_path=self.path)
-        sd.run_digest(send, state_path=self.path)
-        self.assertEqual(send.call_count, 1)
+        with self.assertRaises(RuntimeError):
+            sd.run_digest(send, state_path=self.path)
+        send.assert_not_called()
+        self.assertFalse(self.path.exists())
 
     def test_corrupt_state_refuses_resend(self):
         self.path.write_text('{"sent": []}', encoding='utf-8')
