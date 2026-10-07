@@ -9,6 +9,22 @@ import main
 
 
 class TelegramPollingTests(unittest.TestCase):
+    def test_usd_reply_includes_current_usd_thb_rate(self):
+        with (
+            patch.object(
+                main,
+                "fetch_all",
+                return_value={"USDTHB": {"last": 33.7, "pct": 0.03, "dp": 3, "unit": ""}},
+            ),
+            patch.object(main, "fetch_market_data_json", return_value=None),
+            patch.object(main, "compute_thb_score", return_value=None),
+            patch.object(main, "compute_cip_fair_fixed", return_value=None),
+            patch.object(main, "fetch_tfex_usd_futures_dated", return_value=None),
+        ):
+            reply = main.format_usd_futures()
+
+        self.assertIn("💱 USD/THB: 33.700", reply)
+
     def test_repeated_poll_conflicts_notify_configured_chat_once(self):
         response = Mock(status_code=409)
         response.json.return_value = {

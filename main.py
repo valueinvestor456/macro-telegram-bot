@@ -910,7 +910,10 @@ def format_usd_futures() -> str:
         score = compute_thb_score(data, market)
         score_line = f"Score {score['score']:+.0f} {score['short_verdict']}" if score else "Score N/A"
 
-        lines = [f"📊 USD Futures — {format_th_timestamp()} (TH) {score_line}"]
+        lines = [
+            f"📊 USD Futures — {format_th_timestamp()} (TH) {score_line}",
+            _line("USDTHB", data.get("USDTHB"), "💱 USD/THB"),
+        ]
 
         # USDZ26 (Dec 2026) - current contract
         cip_z = compute_cip_fair_fixed(data, market, 12)
