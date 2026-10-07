@@ -1006,13 +1006,13 @@ def handle_command(chat_id: str, command: str) -> None:
     """Handle incoming Telegram commands."""
     try:
         print(f"[telegram] handling command: {command} from {chat_id}", file=sys.stdout, flush=True)
-        if command == "/usd":
+        if command in ("/u", "/usd"):
             print(f"[telegram] fetching USD futures data...", file=sys.stdout, flush=True)
             text = format_usd_futures()
             print(f"[telegram] formatted message, sending reply...", file=sys.stdout, flush=True)
             send_telegram_reply(chat_id, text)
         elif command in ["/start", "/help"]:
-            help_text = "📌 Available commands:\n/usd — Check USDZ26 & USDH27 real-time prices & fair values\n/help — Show this message"
+            help_text = "📌 Available commands:\n/u — Check USD/THB, USDZ26 & USDH27 prices, fair values & score\n/usd — Same as /u\n/help — Show this message"
             send_telegram_reply(chat_id, help_text)
         else:
             print(f"[telegram] unknown command: {command} from {chat_id}", file=sys.stdout, flush=True)
@@ -1115,10 +1115,10 @@ def main():
     print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
     print(f"  — USD macro summary (USDZ26 + USDH27)")
     print("  — Thai Stock Updates: material disclosures, daily 09:00 / 14:00 TH")
-    print(f"  — polling for /usd commands")
+    print(f"  — polling for /u and /usd commands")
     print(f"  — Ctrl+C to stop")
 
-    print("[bot] starting polling loop — waiting for /usd commands...", flush=True)
+    print("[bot] starting polling loop — waiting for /u and /usd commands...", flush=True)
     while True:
         schedule.run_pending()
         poll_commands()
