@@ -593,52 +593,63 @@ def format_message(d: dict, market: dict | None) -> str:
     score_line = f"🎯 Score {score['score']:+.0f} {score['short_verdict']}" if score else "🎯 Score N/A ⚠️"
 
     lines = [
-        f"📊 Macro Summary — {now} (TH)",
+        "📊 Macro Summary",
+        f"🕒 {now} (TH)",
         "",
         _line("USDTHB", d.get("USDTHB"), "💱 USD/THB"),
         score_line,
     ]
     if score:
-        breakdown = "  ".join(
+        breakdown = "\n".join(
             f"{k} {v:+.2f}" for k, v in score["contrib"].items() if k != "PMI"
         )
-        lines.append(f"   ⤷ {breakdown}")
+        lines.append(breakdown)
 
     # USDZ26 (Dec 2026) — current contract
     cip_z = compute_cip_fair_fixed(d, market, 12)
     live_fut_z = fetch_tfex_usd_futures_dated("USDZ26")
     if live_fut_z and cip_z:
         arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'}{live_fut_z['pct']:+.2f}%"
-        lines.append(f"USDZ26 (Real/Fair): {live_fut_z['price']:.4f} / {cip_z['fair']:.4f} {arrow}")
+        lines.append(f"\n📄 USDZ26\nจริง: {live_fut_z['price']:.4f}\n{arrow}\nFair: {cip_z['fair']:.4f}")
         basis = live_fut_z["price"] - cip_z["fair"]
         verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
-        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+        lines.append(f"Basis: {basis:+.4f} THB\n{verdict}")
     elif live_fut_z and not cip_z:
         arrow = f"{'🟢▲' if live_fut_z['pct'] >= 0 else '🔴▼'}{live_fut_z['pct']:+.2f}%"
-        lines.append(f"USDZ26 (Real/Fair): {live_fut_z['price']:.4f} / N/A ⚠️ {arrow}")
+        lines.append(f"\n📄 USDZ26\nจริง: {live_fut_z['price']:.4f}\n{arrow}\nFair: N/A ⚠️")
     elif cip_z and not live_fut_z:
-        lines.append(f"USDZ26 (Real/Fair): N/A ⚠️ / {cip_z['fair']:.4f}")
+        lines.append(f"\n📄 USDZ26\nจริง: N/A ⚠️\nFair: {cip_z['fair']:.4f}")
     else:
-        lines.append("USDZ26 (Real/Fair): N/A ⚠️ / N/A ⚠️")
+        lines.append("\n📄 USDZ26\nจริง: N/A ⚠️\nFair: N/A ⚠️")
 
     # USDH27 (Mar 2027) — next contract
     cip_h = compute_cip_fair_fixed(d, market, 3)
     live_fut_h = fetch_tfex_usd_futures_dated("USDH27")
     if live_fut_h and cip_h:
         arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'} {live_fut_h['pct']:+.2f}%"
-        lines.append(f"USDH27 จริง: {live_fut_h['price']:.4f} / มูลค่ายุติธรรม: {cip_h['fair']:.4f} {arrow}")
+        lines.append(f"\n📄 USDH27\nจริง: {live_fut_h['price']:.4f}\n{arrow}\nFair: {cip_h['fair']:.4f}")
         basis = live_fut_h["price"] - cip_h["fair"]
         verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
-        lines.append(f"Basis: {basis:+.4f} THB {verdict}")
+        lines.append(f"Basis: {basis:+.4f} THB\n{verdict}")
     elif live_fut_h and not cip_h:
         arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'} {live_fut_h['pct']:+.2f}%"
-        lines.append(f"USDH27 จริง: {live_fut_h['price']:.4f} / มูลค่ายุติธรรม: N/A ⚠️ {arrow}")
+        lines.append(f"\n📄 USDH27\nจริง: {live_fut_h['price']:.4f}\n{arrow}\nFair: N/A ⚠️")
     elif cip_h and not live_fut_h:
-        lines.append(f"USDH27 จริง: N/A ⚠️ / มูลค่ายุติธรรม: {cip_h['fair']:.4f}")
+        lines.append(f"\n📄 USDH27\nจริง: N/A ⚠️\nFair: {cip_h['fair']:.4f}")
     else:
-        lines.append("USDH27 จริง: N/A ⚠️ / มูลค่ายุติธรรม: N/A ⚠️")
+        lines.append("\n📄 USDH27\nจริง: N/A ⚠️\nFair: N/A ⚠️")
 
-    lines.append(format_trend_line(market))
+    trend = (market or {}).get("usdthb_trend")
+    lines.append("")
+    if trend:
+        lines.extend([
+            "🟢 Uptrend" if trend["direction"] == "up" else "🔴 Downtrend",
+            f"EMA20: {trend['ema20']:.3f}",
+            f"EMA50: {trend['ema50']:.3f}",
+        ])
+    else:
+        lines.append(format_trend_line(market))
+    lines.extend(["", "🌐 ตลาดโลก"])
     lines += [
         _line("DXY", d.get("DXY"), "💵 DXY"),
         _line("GOLD", d.get("GOLD"), "🥇 Gold"),
@@ -650,17 +661,28 @@ def format_message(d: dict, market: dict | None) -> str:
     us, th = d.get("US10Y"), d.get("TH10Y")
     if us and th:
         spread = us["last"] - th["last"]
-        lines.append(f"↔️ Spread US−TH: {spread:+.2f}% {'🔴 (outflow risk)' if spread > 2.0 else ''}")
+        lines.append(f"↔️ Spread US−TH: {spread:+.2f}%")
+        if spread > 2.0:
+            lines.append("🔴 เสี่ยงเงินทุนไหลออก")
 
     signal = compute_trade_signal(score, market, cip_z, live_fut_z)
     if signal:
-        lines.append(signal)
+        headline, separator, details = signal.partition(" (")
+        lines.extend(["", headline])
+        if separator:
+            details = details.removesuffix(")")
+            agreement, colon, reasons = details.partition(": ")
+            if colon:
+                lines.append(agreement)
+            else:
+                reasons = details
+            lines.extend(f"• {reason}" for reason in reasons.split(", "))
 
     catalyst = format_catalyst_line(fetch_calendar())
     if catalyst:
         lines.append(catalyst)
 
-    lines.append("ดูสด: deepsleep456.com/usd")
+    lines.extend(["", "ดูสด: deepsleep456.com/usd"])
     return "\n".join(lines)
 
 
