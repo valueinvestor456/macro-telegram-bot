@@ -625,14 +625,14 @@ def format_message(d: dict, market: dict | None) -> str:
     cip_h = compute_cip_fair_fixed(d, market, 3)
     live_fut_h = fetch_tfex_usd_futures_dated("USDH27")
     if live_fut_h and cip_h:
-        arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'}{live_fut_h['pct']:+.2f}%"
-        lines.append(f"USDH27 (Real/Fair): {live_fut_h['price']:.4f} / {cip_h['fair']:.4f} {arrow}")
         basis = live_fut_h["price"] - cip_h["fair"]
+        comparison = (f"🔴▼discount {abs(basis):.2f}" if basis < 0 else
+                      f"🟢▲premium {basis:.2f}" if basis > 0 else "⚪ fair 0.00")
+        lines.append(f"USDH27 (Real/Fair): {live_fut_h['price']:.4f} / {cip_h['fair']:.4f} {comparison}")
         verdict = "🔴 RICH" if basis > FUT_BASIS_THRESHOLD else ("🟢 CHEAP" if basis < -FUT_BASIS_THRESHOLD else "⚪ FAIR")
         lines.append(f"Basis: {basis:+.4f} THB {verdict}")
     elif live_fut_h and not cip_h:
-        arrow = f"{'🟢▲' if live_fut_h['pct'] >= 0 else '🔴▼'}{live_fut_h['pct']:+.2f}%"
-        lines.append(f"USDH27 (Real/Fair): {live_fut_h['price']:.4f} / N/A ⚠️ {arrow}")
+        lines.append(f"USDH27 (Real/Fair): {live_fut_h['price']:.4f} / N/A ⚠️")
     elif cip_h and not live_fut_h:
         lines.append(f"USDH27 (Real/Fair): N/A ⚠️ / {cip_h['fair']:.4f}")
     else:
@@ -1002,6 +1002,58 @@ def get_telegram_updates() -> list:
         return []
 
 
+def check_telegram() -> bool:
+    """Diagnose the configured bot without sending or acknowledging messages.
+
+    Run only while the normal poller is stopped; the workflow uses the same
+    concurrency group to enforce this. Never print credentials or messages.
+    """
+    if not TELEGRAM_BOT_TOKEN or "PASTE_YOUR" in TELEGRAM_BOT_TOKEN:
+        print("[check] TELEGRAM_BOT_TOKEN is not configured", flush=True)
+        return False
+    base_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    try:
+        response = requests.get(f"{base_url}/getMe", timeout=15)
+        response.raise_for_status()
+        identity = response.json()
+        if not identity.get("ok"):
+            print("[check] Telegram did not confirm bot identity", flush=True)
+            return False
+        bot = identity["result"]
+        print(f"[check] bot: @{bot.get('username', '')} ({bot.get('first_name', '')})", flush=True)
+        response = requests.get(f"{base_url}/getWebhookInfo", timeout=15)
+        response.raise_for_status()
+        webhook = response.json()
+        if not webhook.get("ok"):
+            return False
+        if webhook["result"].get("url"):
+            print("[check] webhook is enabled; polling cannot run alongside it", flush=True)
+            return False
+        print("[check] webhook disabled", flush=True)
+        # Omitting offset avoids confirming/removing any pending messages.
+        conflicts = 0
+        for attempt in range(3):
+            response = requests.get(
+                f"{base_url}/getUpdates", params={"timeout": 10}, timeout=15
+            )
+            if response.status_code == 409:
+                conflicts += 1
+                print(f"[check] poll {attempt + 1}/3: HTTP 409, another receiver is active", flush=True)
+            else:
+                response.raise_for_status()
+                if not response.json().get("ok"):
+                    return False
+                print(f"[check] poll {attempt + 1}/3: OK", flush=True)
+            if attempt < 2:
+                time.sleep(2)
+        print(f"[check] result: {'CONFLICT' if conflicts else 'OK'}", flush=True)
+        return conflicts == 0
+    except requests.RequestException as error:
+        status = error.response.status_code if error.response is not None else "network"
+        print(f"[check] failed: {type(error).__name__} ({status})", flush=True)
+        return False
+
+
 def handle_command(chat_id: str, command: str) -> None:
     """Handle incoming Telegram commands."""
     try:
@@ -1029,7 +1081,7 @@ def send_telegram_reply(chat_id: str, text: str) -> bool:
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        print(f"[reply] POST to {url}", file=sys.stdout, flush=True)
+        print("[reply] POST sendMessage", file=sys.stdout, flush=True)
         payload = {"chat_id": chat_id, "text": text}
         if "<pre>" in text:
             payload["parse_mode"] = "HTML"
@@ -1039,9 +1091,7 @@ def send_telegram_reply(chat_id: str, text: str) -> bool:
         print(f"[reply] ✓ sent to {chat_id} successfully", file=sys.stdout, flush=True)
         return True
     except Exception as e:
-        print(f"[reply] ✗ FAILED: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
-        import traceback
-        traceback.print_exc(file=sys.stderr)
+        print(f"[reply] ✗ FAILED: {type(e).__name__}", file=sys.stderr, flush=True)
         return False
 
 
@@ -1092,8 +1142,12 @@ def main():
     parser.add_argument("--once", action="store_true", help="run one fetch+send now, then exit")
     parser.add_argument("--stocks", action="store_true", help="run Thai Stock Updates only")
     parser.add_argument("--dry-run", action="store_true", help="preview stocks without sending or saving state")
+    parser.add_argument("--telegram-check", action="store_true", help="diagnose Telegram while the normal poller is stopped")
+    parser.add_argument("--poll-only", action="store_true", help="receive commands without running scheduled sends")
     args = parser.parse_args()
 
+    if args.telegram_check:
+        raise SystemExit(0 if check_telegram() else 1)
     if args.stocks:
         from stock_digest import run_digest
         run_digest(send_telegram, dry_run=args.dry_run)
@@ -1105,14 +1159,15 @@ def main():
         job()
         return
 
-    for t in SEND_TIMES:
-        schedule.every().day.at(t, TIMEZONE).do(job)
+    if not args.poll_only:
+        for t in SEND_TIMES:
+            schedule.every().day.at(t, TIMEZONE).do(job)
     # GitHub has a dedicated daily stock workflow with persistent dedup state.
     # Local installations use the same two stock rounds as GitHub.
-    if os.environ.get("GITHUB_ACTIONS") != "true":
+    if not args.poll_only and os.environ.get("GITHUB_ACTIONS") != "true":
         for stock_time in ("09:00", "14:00"):
             schedule.every().day.at(stock_time, TIMEZONE).do(job_stocks)
-    print(f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
+    print("Command receiver only" if args.poll_only else f"scheduled daily at {', '.join(SEND_TIMES)} ({TIMEZONE})")
     print(f"  — USD macro summary (USDZ26 + USDH27)")
     print("  — Thai Stock Updates: material disclosures, daily 09:00 / 14:00 TH")
     print(f"  — polling for /u and /usd commands")

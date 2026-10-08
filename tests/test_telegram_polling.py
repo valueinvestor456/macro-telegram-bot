@@ -1,6 +1,6 @@
 import io
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import Mock, patch
 
 import requests
@@ -9,6 +9,69 @@ import main
 
 
 class TelegramPollingTests(unittest.TestCase):
+    def test_usd_aliases_call_the_same_handler(self):
+        for command in ("/u", "/usd"):
+            with (
+                self.subTest(command=command),
+                patch.object(main, "format_usd_futures", return_value="USD result") as format_reply,
+                patch.object(main, "send_telegram_reply") as send,
+            ):
+                main.handle_command("123", command)
+                format_reply.assert_called_once_with()
+                send.assert_called_once_with("123", "USD result")
+
+    def test_telegram_check_detects_conflict_without_acknowledging_updates(self):
+        for conflict in (False, True):
+            identity = Mock()
+            identity.json.return_value = {"ok": True, "result": {"username": "usd_bot", "first_name": "Usd"}}
+            webhook = Mock()
+            webhook.json.return_value = {"ok": True, "result": {"url": ""}}
+            poll = Mock(status_code=409 if conflict else 200)
+            poll.json.return_value = {"ok": True, "result": [{"update_id": 101, "message": {"text": "private-message"}}]}
+            with (
+                self.subTest(conflict=conflict),
+                patch.object(main, "TELEGRAM_BOT_TOKEN", "private-token"),
+                patch.object(main.requests, "get", side_effect=[identity, webhook, poll, poll, poll]) as get,
+                patch.object(main.requests, "post") as post,
+                patch.object(main, "save_last_update_offset") as save,
+                patch.object(main.time, "sleep"),
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(main.check_telegram(), not conflict)
+                for call in get.call_args_list[2:]:
+                    self.assertNotIn("offset", call.kwargs["params"])
+                post.assert_not_called()
+                save.assert_not_called()
+                self.assertIn("CONFLICT" if conflict else "result: OK", output.getvalue())
+                self.assertNotIn("private-token", output.getvalue())
+                self.assertNotIn("private-message", output.getvalue())
+
+    def test_telegram_check_does_not_poll_when_webhook_is_active(self):
+        identity = Mock()
+        identity.json.return_value = {"ok": True, "result": {"username": "usd_bot"}}
+        webhook = Mock()
+        webhook.json.return_value = {"ok": True, "result": {"url": "https://example.com/private"}}
+        with (
+            patch.object(main, "TELEGRAM_BOT_TOKEN", "private-token"),
+            patch.object(main.requests, "get", side_effect=[identity, webhook]) as get,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            self.assertFalse(main.check_telegram())
+        self.assertEqual(get.call_count, 2)
+        self.assertNotIn("https://example.com/private", output.getvalue())
+
+    def test_poll_only_does_not_run_scheduled_sends(self):
+        with (
+            patch.object(main.sys, "argv", ["main.py", "--poll-only"]),
+            patch.object(main.schedule, "every") as every,
+            patch.object(main.schedule, "run_pending"),
+            patch.object(main, "poll_commands", side_effect=KeyboardInterrupt),
+            redirect_stdout(io.StringIO()),
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                main.main()
+            every.assert_not_called()
+
     def test_usd_reply_includes_current_usd_thb_rate(self):
         with (
             patch.object(

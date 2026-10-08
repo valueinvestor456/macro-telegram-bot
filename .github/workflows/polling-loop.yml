@@ -6,6 +6,14 @@ on:
     - cron: '0 */5 * * *'
 
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Run the command receiver or diagnose a polling conflict
+        type: choice
+        default: run
+        options:
+          - run
+          - check
 
 concurrency:
   group: telegram-bot-polling
@@ -33,4 +41,10 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python main.py
+          POLLING_MODE: ${{ inputs.mode || 'run' }}
+        run: |
+          if [ "$POLLING_MODE" = "check" ]; then
+            python main.py --telegram-check
+          else
+            python main.py --poll-only
+          fi
