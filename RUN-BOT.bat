@@ -10,6 +10,10 @@ echo.
 echo.
 echo [%date% %time%] Starting bot...
 python main.py
+if errorlevel 78 if not errorlevel 79 (
+    echo Another Telegram receiver is active. Stop it before restarting this bot.
+    exit /b 78
+)
 
 REM If bot exits, wait 5 seconds and restart
 echo.

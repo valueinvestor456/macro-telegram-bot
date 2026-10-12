@@ -88,7 +88,7 @@ class TelegramPollingTests(unittest.TestCase):
 
         self.assertIn("💱 USD/THB: 33.700", reply)
 
-    def test_repeated_poll_conflicts_notify_configured_chat_once(self):
+    def test_repeated_poll_conflicts_stop_without_sending_or_acknowledging(self):
         response = Mock(status_code=409)
         response.json.return_value = {
             "description": "Conflict: terminated by other getUpdates request"
@@ -97,36 +97,57 @@ class TelegramPollingTests(unittest.TestCase):
         with (
             patch.object(main, "TELEGRAM_BOT_TOKEN", "test-token"),
             patch.object(main, "TELEGRAM_CHAT_ID", "123"),
-            patch.object(main, "_POLL_CONFLICT_COUNT", 0),
-            patch.object(main, "_POLL_CONFLICT_NOTIFIED", False),
+            patch.object(main, "_POLL_CONFLICT_TIMES", []),
+            patch.object(main.time, "monotonic", return_value=100),
             patch.object(main.requests, "get") as get,
             patch.object(main, "send_telegram_reply") as send_reply,
+            patch.object(main, "save_last_update_offset") as save,
             redirect_stderr(io.StringIO()) as stderr,
         ):
             get.return_value.raise_for_status.side_effect = error
 
-            for _ in range(4):
+            for _ in range(2):
                 self.assertEqual(main.get_telegram_updates(), [])
+            with self.assertRaises(SystemExit) as stopped:
+                main.poll_commands()
 
-            send_reply.assert_called_once()
-            self.assertEqual(send_reply.call_args.args[0], "123")
-            self.assertIn("เหลือ bot poller เพียงตัวเดียว", send_reply.call_args.args[1])
+            self.assertEqual(stopped.exception.code, 78)
+            send_reply.assert_not_called()
+            save.assert_not_called()
             self.assertIn("Conflict: terminated by other getUpdates request", stderr.getvalue())
             self.assertNotIn("test-token", stderr.getvalue())
 
-    def test_successful_poll_resets_conflict_state(self):
+    def test_successful_poll_keeps_recent_conflicts_but_expires_old_ones(self):
         response = Mock()
         response.json.return_value = {"result": [{"update_id": 1}]}
         with (
             patch.object(main, "TELEGRAM_BOT_TOKEN", "test-token"),
-            patch.object(main, "_POLL_CONFLICT_COUNT", 3),
-            patch.object(main, "_POLL_CONFLICT_NOTIFIED", True),
+            patch.object(main, "_POLL_CONFLICT_TIMES", [1, 91]),
+            patch.object(main.time, "monotonic", return_value=130),
             patch.object(main.requests, "get", return_value=response),
         ):
             self.assertEqual(main.get_telegram_updates(), [{"update_id": 1}])
+            self.assertEqual(main._POLL_CONFLICT_TIMES, [91])
 
-        self.assertEqual(main._POLL_CONFLICT_COUNT, 0)
-        self.assertFalse(main._POLL_CONFLICT_NOTIFIED)
+    def test_alternating_successes_do_not_hide_a_second_receiver(self):
+        conflict = Mock(status_code=409)
+        conflict.json.return_value = {"description": "other getUpdates request"}
+        conflict.raise_for_status.side_effect = requests.HTTPError(response=conflict)
+        ok = Mock()
+        ok.json.return_value = {"result": []}
+        with (
+            patch.object(main, "TELEGRAM_BOT_TOKEN", "test-token"),
+            patch.object(main, "_POLL_CONFLICT_TIMES", []),
+            patch.object(main.time, "monotonic", side_effect=[10, 20, 30, 40, 50]),
+            patch.object(main.requests, "get", side_effect=[conflict, ok, conflict, ok, conflict]),
+            patch.object(main, "send_telegram_reply") as send,
+            redirect_stderr(io.StringIO()),
+        ):
+            for _ in range(4):
+                main.get_telegram_updates()
+            with self.assertRaises(SystemExit):
+                main.get_telegram_updates()
+            send.assert_not_called()
 
 
 if __name__ == "__main__":

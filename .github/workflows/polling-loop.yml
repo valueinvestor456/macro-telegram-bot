@@ -21,6 +21,8 @@ concurrency:
 
 jobs:
   poll-telegram:
+    # Pause this receiver while another host owns polling. Checks remain usable.
+    if: ${{ inputs.mode == 'check' || vars.TELEGRAM_POLLING_ENABLED != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 330  # 5.5 hours (slightly under 6-hour limit)
 
