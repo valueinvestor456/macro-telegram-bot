@@ -1,7 +1,7 @@
-"""Macro summary -> Telegram bot, scheduled 4x daily (Thailand time).
+"""Macro summary -> Telegram bot, scheduled 12x daily (Thailand time).
 
 Fetches DXY / GOLD / US10Y / TH10Y / USDTHB / BDI, formats a summary message,
-and sends it via the Telegram Bot API at 08:00, 10:00, 14:00, 16:00 Asia/Bangkok.
+and sends it via the Telegram Bot API at the configured Asia/Bangkok times.
 
 Per-asset failures degrade to "N/A" — one blocked source never kills the message.
 
@@ -59,7 +59,10 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # If CHAT_ID not set, auto-detect from first message
 AUTO_DETECT_CHAT_ID_PATH = Path(__file__).with_name("telegram_chat_id.json")
 
-SEND_TIMES = ["09:45", "10:00", "11:00", "14:00", "15:00", "16:00", "16:15", "19:30", "20:30"]
+SEND_TIMES = [
+    "09:45", "10:00", "11:00", "12:00", "14:00", "14:30",
+    "15:00", "16:00", "16:15", "19:30", "20:30", "21:00",
+]
 TIMEZONE = "Asia/Bangkok"
 
 BROWSER_HEADERS = {
