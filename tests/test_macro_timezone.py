@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from unittest.mock import patch
 from unittest import TestCase
 
 import main
@@ -9,3 +10,30 @@ class MacroTimestampTests(TestCase):
         utc_time = datetime(2026, 10, 7, 3, 0, tzinfo=timezone.utc)
 
         self.assertEqual(main.format_th_timestamp(utc_time), "07/10/2026 10:00")
+
+    def test_bank_holiday_is_not_a_business_day(self):
+        holiday = datetime(2026, 10, 13, 9, 0, tzinfo=main.ZoneInfo(main.TIMEZONE))
+
+        self.assertFalse(main.is_thai_bank_business_day(holiday))
+
+    def test_weekday_not_in_holiday_calendar_is_a_business_day(self):
+        business_day = datetime(2026, 10, 12, 9, 0, tzinfo=main.ZoneInfo(main.TIMEZONE))
+
+        self.assertTrue(main.is_thai_bank_business_day(business_day))
+
+    def test_weekend_is_not_a_business_day(self):
+        weekend = datetime(2026, 10, 17, 9, 0, tzinfo=main.ZoneInfo(main.TIMEZONE))
+
+        self.assertFalse(main.is_thai_bank_business_day(weekend))
+
+    def test_stale_scheduled_run_outside_configured_slot_is_rejected(self):
+        stale_run = datetime(2026, 10, 12, 18, 36, tzinfo=main.ZoneInfo(main.TIMEZONE))
+
+        with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
+            self.assertFalse(main.is_expected_scheduled_macro_time(stale_run))
+
+    def test_scheduled_run_near_configured_slot_is_allowed(self):
+        near_slot = datetime(2026, 10, 12, 19, 27, tzinfo=main.ZoneInfo(main.TIMEZONE))
+
+        with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
+            self.assertTrue(main.is_expected_scheduled_macro_time(near_slot))

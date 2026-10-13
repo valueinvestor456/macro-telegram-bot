@@ -64,6 +64,33 @@ SEND_TIMES = [
     "15:00", "16:00", "16:15", "19:30", "20:30", "21:00",
 ]
 TIMEZONE = "Asia/Bangkok"
+SEND_TIME_TOLERANCE_MINUTES = 10
+
+# Bank holidays published by the Bank of Thailand for Buddhist year 2569
+# (Gregorian 2026), including the special Bangkok holiday on 16 October.
+# Update this set when BOT publishes the next year's calendar.
+THAI_BANK_HOLIDAYS = frozenset({
+    date(2026, 1, 1),
+    date(2026, 1, 2),
+    date(2026, 3, 3),
+    date(2026, 4, 6),
+    date(2026, 4, 13),
+    date(2026, 4, 14),
+    date(2026, 4, 15),
+    date(2026, 5, 1),
+    date(2026, 5, 4),
+    date(2026, 6, 1),
+    date(2026, 6, 3),
+    date(2026, 7, 28),
+    date(2026, 7, 29),
+    date(2026, 8, 12),
+    date(2026, 10, 13),
+    date(2026, 10, 16),
+    date(2026, 10, 23),
+    date(2026, 12, 7),
+    date(2026, 12, 10),
+    date(2026, 12, 31),
+})
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -77,6 +104,31 @@ def format_th_timestamp(now: datetime | None = None) -> str:
     """Format a timestamp in Thailand time, regardless of the runner timezone."""
     now = now or datetime.now(ZoneInfo(TIMEZONE))
     return now.astimezone(ZoneInfo(TIMEZONE)).strftime("%d/%m/%Y %H:%M")
+
+
+def is_thai_bank_business_day(now: datetime | None = None) -> bool:
+    """Return whether *now* is a Thai bank business day in Bangkok time."""
+    now = now or datetime.now(ZoneInfo(TIMEZONE))
+    local_date = now.astimezone(ZoneInfo(TIMEZONE)).date()
+    return local_date.weekday() < 5 and local_date not in THAI_BANK_HOLIDAYS
+
+
+def is_expected_scheduled_macro_time(now: datetime | None = None) -> bool:
+    """Reject stale GitHub schedule runs that arrive outside a configured slot."""
+    # Manual workflow_dispatch runs and the local always-on scheduler are allowed
+    # to run on demand; this gate only protects GitHub's scheduled event.
+    if os.environ.get("GITHUB_EVENT_NAME") != "schedule":
+        return True
+
+    now = now or datetime.now(ZoneInfo(TIMEZONE))
+    local_now = now.astimezone(ZoneInfo(TIMEZONE))
+    current_minutes = local_now.hour * 60 + local_now.minute
+    scheduled_minutes = [
+        int(hour) * 60 + int(minute)
+        for hour, minute in (slot.split(":") for slot in SEND_TIMES)
+    ]
+    distance = min(abs(current_minutes - slot) for slot in scheduled_minutes)
+    return distance <= SEND_TIME_TOLERANCE_MINUTES
 
 
 # Auto-detect chat ID from first message if not configured
@@ -795,10 +847,16 @@ def send_telegram(text: str) -> bool:
 
 
 def job():
+    if not is_thai_bank_business_day():
+        print(f"[scheduler] skipped {format_th_timestamp()} — Thai bank holiday/weekend")
+        return False
+    if not is_expected_scheduled_macro_time():
+        print(f"[scheduler] skipped {format_th_timestamp()} — outside configured macro slot")
+        return False
     print(f"\n=== fetching @ {datetime.now(ZoneInfo(TIMEZONE)):%Y-%m-%d %H:%M:%S} ===")
     data = fetch_all()
     market = fetch_market_data_json()
-    send_telegram(format_message(data, market))
+    return send_telegram(format_message(data, market))
 
 
 def format_usdz26_message(d: dict, market: dict | None) -> str:
@@ -869,9 +927,12 @@ def job_usdz26():
     send_telegram(format_usdz26_message(data, market))
 
 
-def job_stocks():
+def job_stocks(*, dry_run=False):
+    if not is_thai_bank_business_day():
+        print(f"[scheduler] skipped stock digest {format_th_timestamp()} — Thai bank holiday/weekend")
+        return False
     from stock_digest import run_digest
-    run_digest(send_telegram)
+    return run_digest(send_telegram, dry_run=dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -1158,8 +1219,7 @@ def main():
     if args.telegram_check:
         raise SystemExit(0 if check_telegram() else 1)
     if args.stocks:
-        from stock_digest import run_digest
-        run_digest(send_telegram, dry_run=args.dry_run)
+        job_stocks(dry_run=args.dry_run)
         return
     if args.dry_run:
         parser.error("--dry-run requires --stocks")
