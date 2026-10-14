@@ -65,6 +65,7 @@ SEND_TIMES = [
 ]
 TIMEZONE = "Asia/Bangkok"
 SEND_TIME_TOLERANCE_MINUTES = 10
+SEND_LATE_TOLERANCE_MINUTES = 30
 
 # Bank holidays published by the Bank of Thailand for Buddhist year 2569
 # (Gregorian 2026), including the special Bangkok holiday on 16 October.
@@ -127,8 +128,10 @@ def is_expected_scheduled_macro_time(now: datetime | None = None) -> bool:
         int(hour) * 60 + int(minute)
         for hour, minute in (slot.split(":") for slot in SEND_TIMES)
     ]
-    distance = min(abs(current_minutes - slot) for slot in scheduled_minutes)
-    return distance <= SEND_TIME_TOLERANCE_MINUTES
+    return any(
+        -SEND_TIME_TOLERANCE_MINUTES <= current_minutes - slot <= SEND_LATE_TOLERANCE_MINUTES
+        for slot in scheduled_minutes
+    )
 
 
 # Auto-detect chat ID from first message if not configured
@@ -846,17 +849,40 @@ def send_telegram(text: str) -> bool:
         return False
 
 
-def job():
+def record_macro_delivery(status: str, reason: str) -> None:
+    """Make skipped runs and delivery failures visible in the Actions summary."""
+    timestamp = format_th_timestamp()
+    print(f"[delivery] {status} {timestamp} (TH) — {reason}", flush=True)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with Path(summary_path).open("a", encoding="utf-8") as summary:
+                summary.write(f"### Macro Telegram delivery\n\n{status} — {timestamp} (TH)\n\n{reason}\n")
+        except OSError:
+            print("[delivery] could not write Actions summary", file=sys.stderr)
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        if status == "SKIPPED":
+            print(f"::warning title=Macro summary not sent::{reason}", flush=True)
+        elif status == "FAILED":
+            print(f"::error title=Macro summary delivery failed::{reason}", flush=True)
+
+
+def job() -> bool | None:
     if not is_thai_bank_business_day():
-        print(f"[scheduler] skipped {format_th_timestamp()} — Thai bank holiday/weekend")
-        return False
+        record_macro_delivery("SKIPPED", "Thai bank holiday/weekend; no message sent")
+        return None
     if not is_expected_scheduled_macro_time():
-        print(f"[scheduler] skipped {format_th_timestamp()} — outside configured macro slot")
-        return False
+        record_macro_delivery("SKIPPED", "Outside configured macro slot and late grace period; no message sent")
+        return None
     print(f"\n=== fetching @ {datetime.now(ZoneInfo(TIMEZONE)):%Y-%m-%d %H:%M:%S} ===")
     data = fetch_all()
     market = fetch_market_data_json()
-    return send_telegram(format_message(data, market))
+    delivered = send_telegram(format_message(data, market))
+    record_macro_delivery(
+        "SENT" if delivered else "FAILED",
+        "Telegram confirmed delivery" if delivered else "Telegram did not confirm delivery",
+    )
+    return delivered
 
 
 def format_usdz26_message(d: dict, market: dict | None) -> str:
@@ -1225,7 +1251,8 @@ def main():
         parser.error("--dry-run requires --stocks")
 
     if args.once:
-        job()
+        if job() is False:
+            raise SystemExit(1)
         return
 
     if not args.poll_only:

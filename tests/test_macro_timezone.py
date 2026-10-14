@@ -37,3 +37,15 @@ class MacroTimestampTests(TestCase):
 
         with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
             self.assertTrue(main.is_expected_scheduled_macro_time(near_slot))
+
+    def test_morning_run_delayed_by_25_minutes_is_allowed(self):
+        late_run = datetime(2026, 10, 14, 10, 25, tzinfo=main.ZoneInfo(main.TIMEZONE))
+        with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
+            self.assertTrue(main.is_expected_scheduled_macro_time(late_run))
+
+    def test_late_grace_has_a_limit_and_does_not_allow_overnight_sends(self):
+        for hour, minute, expected in ((10, 30, True), (10, 31, False), (3, 6, False), (9, 20, False)):
+            with self.subTest(hour=hour, minute=minute):
+                now = datetime(2026, 10, 14, hour, minute, tzinfo=main.ZoneInfo(main.TIMEZONE))
+                with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
+                    self.assertEqual(main.is_expected_scheduled_macro_time(now), expected)
