@@ -5,3 +5,4 @@ stock_digest_state.json
 stock_digest_state.tmp
 .source-cache/
 inspect_sources.py
+.state/

@@ -1,0 +1,23 @@
+[Unit]
+Description=Macro Telegram send-only scheduler
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=macrobot
+Group=macrobot
+WorkingDirectory=/opt/macro-telegram-bot
+EnvironmentFile=/etc/macro-telegram-bot.env
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=macro-telegram-bot
+ExecStart=/opt/macro-telegram-bot/.venv/bin/python macro_scheduler.py --loop --store sqlite --state-path /var/lib/macro-telegram-bot/delivery.sqlite3
+Restart=always
+RestartSec=30
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
