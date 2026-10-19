@@ -271,7 +271,7 @@ def fetch_calendar() -> list | None:
     ff-calendar.yml workflow) -- read here to surface the next high-impact
     event as a catalyst line instead of duplicating that scrape."""
     try:
-        resp = requests.get("https://deepsleep456.com/usd/calendar.json", timeout=15)
+        resp = requests.get("https://usd.deepsleep456.com/calendar.json", timeout=15)
         resp.raise_for_status()
         return resp.json().get("events") or []
     except Exception as e:
@@ -321,7 +321,7 @@ def fetch_market_data_json() -> dict | None:
     dashboard (refreshed hourly there) instead of duplicating that scraping
     here. Returns None on any failure; callers degrade gracefully."""
     try:
-        resp = requests.get("https://deepsleep456.com/usd/market-data.json", timeout=15)
+        resp = requests.get("https://usd.deepsleep456.com/market-data.json", timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -346,7 +346,7 @@ def fetch_all() -> dict:
 # ---------------------------------------------------------------------------
 # 1b) THB STRENGTH SCORE + CIP FUTURES FAIR VALUE
 # (same formulas/weights/defaults as usd/index.html's recalc()/recalcAnchors()
-#  on the deepsleep456.com/usd dashboard -- kept in sync manually, EXCEPT the
+#  on the usd.deepsleep456.com dashboard -- kept in sync manually, EXCEPT the
 #  Oil factor below, which is main.py-only for now: Thailand is a net oil
 #  importer, so a pricier import bill weakens THB -- same negative-correlation
 #  shape as DXY, just not yet ported to the website widget.)
@@ -550,7 +550,7 @@ def fetch_manual_fut_price() -> dict | None:
     market-data.json -- read it here so the Macro Summary can still show the
     last price you actually reported, with its age."""
     try:
-        resp = requests.get("https://deepsleep456.com/usd/manual-fut-price.json", timeout=15)
+        resp = requests.get("https://usd.deepsleep456.com/manual-fut-price.json", timeout=15)
         resp.raise_for_status()
         return resp.json()
     except Exception as e:
@@ -718,7 +718,7 @@ def format_message(d: dict, market: dict | None) -> str:
     if catalyst:
         lines.append(catalyst)
 
-    lines.append("ดูสด: deepsleep456.com/usd")
+    lines.append("ดูสด: https://usd.deepsleep456.com/")
     return "\n".join(lines)
 
 
@@ -942,7 +942,7 @@ def format_usdz26_message(d: dict, market: dict | None) -> str:
     if catalyst:
         lines.append(catalyst)
 
-    lines.append("ดูสด: deepsleep456.com/usd")
+    lines.append("ดูสด: https://usd.deepsleep456.com/")
     return "\n".join(lines)
 
 
