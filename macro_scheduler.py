@@ -27,6 +27,9 @@ from main import SEND_TIMES, TIMEZONE, is_thai_bank_business_day, record_macro_d
 ROOT = Path(__file__).resolve().parent
 PREPARE_LEASE_SECONDS = 300
 MAX_ATTEMPTS = 3
+# The previous 12-slot schedule included 16:15. Preserve its delivery history
+# without scheduling new sends at that retired time.
+LEDGER_SLOTS = frozenset(SEND_TIMES) | {"16:15"}
 
 
 class StateConflict(Exception):
@@ -42,10 +45,10 @@ def validate_state(state):
     for day_key, day in state["days"].items():
         if date.fromisoformat(day_key).isoformat() != day_key or not isinstance(day, dict):
             raise ValueError("Invalid ledger day")
-        if day.get("covered_through") not in ["", *SEND_TIMES] or not isinstance(day.get("attempts"), dict):
+        if day.get("covered_through") not in LEDGER_SLOTS | {""} or not isinstance(day.get("attempts"), dict):
             raise ValueError("Invalid ledger coverage")
         for slot, entry in day["attempts"].items():
-            if slot not in SEND_TIMES or not isinstance(entry, dict):
+            if slot not in LEDGER_SLOTS or not isinstance(entry, dict):
                 raise ValueError("Invalid ledger slot")
             if entry.get("status") not in ("preparing", "sending", "sent", "retry", "failed", "uncertain"):
                 raise ValueError("Invalid delivery status")

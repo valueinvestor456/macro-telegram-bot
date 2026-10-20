@@ -54,6 +54,39 @@ class MacroSchedulerTests(TestCase):
                 self.assertIsNone(scheduler.due_slot(when))
         self.assertEqual(scheduler.due_slot(self.now.astimezone(scheduler.ZoneInfo("UTC"))), "11:00")
 
+    def test_half_hour_schedule_sends_each_round_once_within_business_hours(self):
+        opening = self.now.replace(hour=9, minute=45)
+        half_hours = [
+            self.now.replace(hour=10, minute=0) + timedelta(minutes=30 * step)
+            for step in range(23)
+        ]
+        for when in [opening, *half_hours]:
+            with self.subTest(when=when):
+                self.now = when
+                self.assertEqual(self.tick(), "sent")
+                self.assertEqual(self.tick(), "already_sent")
+        self.assertEqual(self.sender.call_count, 24)
+        self.assertEqual(self.store.state["days"]["2026-10-14"]["covered_through"], "21:00")
+        self.now = self.now.replace(hour=21, minute=31)
+        self.assertIsNone(scheduler.due_slot(self.now))
+
+    def test_retired_slot_history_remains_readable_and_next_half_hour_can_send(self):
+        self.store.state["days"]["2026-10-14"] = {
+            "covered_through": "16:15",
+            "attempts": {"16:15": {"status": "sent", "message_id": 122}},
+        }
+        scheduler.validate_state(self.store.state)
+        self.now = self.now.replace(hour=16, minute=20)
+        self.assertEqual(self.tick(), "already_sent")
+        self.sender.assert_not_called()
+        self.now = self.now.replace(minute=30)
+        self.assertEqual(self.tick(), "sent")
+        scheduler.validate_state(self.store.state)
+        day = self.store.state["days"]["2026-10-14"]
+        self.assertEqual(day["attempts"]["16:15"]["message_id"], 122)
+        self.assertEqual(day["covered_through"], "16:30")
+        self.sender.assert_called_once()
+
     def test_failed_preparation_retries_without_sending_and_is_bounded(self):
         self.builder.side_effect = TimeoutError()
         self.assertEqual(self.tick(), "retry")

@@ -6,10 +6,13 @@
 [macro_scheduler.py](./macro_scheduler.py). Times and business-day rules come
 from [main.py](./main.py), in `Asia/Bangkok`.
 
-- Existing 12 daily slots remain. Additional wakeups occur at minutes 7, 22,
-  37 and 52 during 09:00–21:59 Thai time on weekdays.
+- There are 24 daily slots: 09:45, then every half hour from 10:00 through 21:00.
+  Additional wakeups occur at minutes 7, 22, 37 and 52 during 09:00–21:59 Thai
+  time on weekdays. The sender still checks the Thai bank holiday calendar.
+- The retired 16:15 slot remains valid in historical ledger entries, but is
+  not scheduled anymore. Keep the existing state branch when updating.
 - The scheduler sends only the latest due slot. At 11:20, missing 09:45,
-  10:00 and 11:00 produces one fresh summary covering through 11:00.
+  10:00, 10:30 and 11:00 produces one fresh summary covering through 11:00.
 - No send before 09:45, after 21:30, on bank holidays/weekends, or for a previous day.
 - A state branch stores claims and acknowledged Telegram message IDs. State
   commits never change `main`. Concurrent writers must match the prior file SHA.

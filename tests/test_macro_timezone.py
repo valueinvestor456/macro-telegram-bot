@@ -27,7 +27,7 @@ class MacroTimestampTests(TestCase):
         self.assertFalse(main.is_thai_bank_business_day(weekend))
 
     def test_stale_scheduled_run_outside_configured_slot_is_rejected(self):
-        stale_run = datetime(2026, 10, 12, 18, 36, tzinfo=main.ZoneInfo(main.TIMEZONE))
+        stale_run = datetime(2026, 10, 12, 22, 36, tzinfo=main.ZoneInfo(main.TIMEZONE))
 
         with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
             self.assertFalse(main.is_expected_scheduled_macro_time(stale_run))
@@ -44,7 +44,10 @@ class MacroTimestampTests(TestCase):
             self.assertTrue(main.is_expected_scheduled_macro_time(late_run))
 
     def test_late_grace_has_a_limit_and_does_not_allow_overnight_sends(self):
-        for hour, minute, expected in ((10, 30, True), (10, 31, False), (3, 6, False), (9, 20, False)):
+        for hour, minute, expected in (
+            (10, 30, True), (10, 31, True), (18, 36, True),
+            (21, 30, True), (21, 31, False), (3, 6, False), (9, 20, False),
+        ):
             with self.subTest(hour=hour, minute=minute):
                 now = datetime(2026, 10, 14, hour, minute, tzinfo=main.ZoneInfo(main.TIMEZONE))
                 with patch.dict("os.environ", {"GITHUB_EVENT_NAME": "schedule"}):
