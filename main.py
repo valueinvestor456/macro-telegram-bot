@@ -59,42 +59,17 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 # If CHAT_ID not set, auto-detect from first message
 AUTO_DETECT_CHAT_ID_PATH = Path(__file__).with_name("telegram_chat_id.json")
 
-SEND_TIMES = [
-    "09:45",
-    "10:00", "10:30", "11:00", "11:30", "12:00", "12:30",
-    "13:00", "13:30", "14:00", "14:30", "15:00", "15:30",
-    "16:00", "16:30", "17:00", "17:30", "18:00", "18:30",
-    "19:00", "19:30", "20:00", "20:30", "21:00",
-]
-TIMEZONE = "Asia/Bangkok"
+# Shared with the independent Cloudflare clock; deploy both after calendar edits.
+SCHEDULE_CONFIG = json.loads(Path(__file__).with_name("macro_schedule.json").read_text(encoding="utf-8"))
+SEND_TIMES = SCHEDULE_CONFIG["send_times"]
+TIMEZONE = SCHEDULE_CONFIG["timezone"]
 SEND_TIME_TOLERANCE_MINUTES = 10
 SEND_LATE_TOLERANCE_MINUTES = 30
 
 # Bank holidays published by the Bank of Thailand for Buddhist year 2569
 # (Gregorian 2026), including the special Bangkok holiday on 16 October.
 # Update this set when BOT publishes the next year's calendar.
-THAI_BANK_HOLIDAYS = frozenset({
-    date(2026, 1, 1),
-    date(2026, 1, 2),
-    date(2026, 3, 3),
-    date(2026, 4, 6),
-    date(2026, 4, 13),
-    date(2026, 4, 14),
-    date(2026, 4, 15),
-    date(2026, 5, 1),
-    date(2026, 5, 4),
-    date(2026, 6, 1),
-    date(2026, 6, 3),
-    date(2026, 7, 28),
-    date(2026, 7, 29),
-    date(2026, 8, 12),
-    date(2026, 10, 13),
-    date(2026, 10, 16),
-    date(2026, 10, 23),
-    date(2026, 12, 7),
-    date(2026, 12, 10),
-    date(2026, 12, 31),
-})
+THAI_BANK_HOLIDAYS = frozenset(date.fromisoformat(day) for day in SCHEDULE_CONFIG["bank_holidays"])
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -114,6 +89,8 @@ def is_thai_bank_business_day(now: datetime | None = None) -> bool:
     """Return whether *now* is a Thai bank business day in Bangkok time."""
     now = now or datetime.now(ZoneInfo(TIMEZONE))
     local_date = now.astimezone(ZoneInfo(TIMEZONE)).date()
+    if local_date.year not in SCHEDULE_CONFIG["calendar_years"]:
+        raise ValueError("Thai bank holiday calendar needs updating")
     return local_date.weekday() < 5 and local_date not in THAI_BANK_HOLIDAYS
 
 

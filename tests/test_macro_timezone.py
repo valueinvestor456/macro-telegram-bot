@@ -26,6 +26,11 @@ class MacroTimestampTests(TestCase):
 
         self.assertFalse(main.is_thai_bank_business_day(weekend))
 
+    def test_unknown_calendar_year_fails_closed(self):
+        unconfigured = datetime(2027, 1, 4, 10, 0, tzinfo=main.ZoneInfo(main.TIMEZONE))
+        with self.assertRaisesRegex(ValueError, "calendar needs updating"):
+            main.is_thai_bank_business_day(unconfigured)
+
     def test_stale_scheduled_run_outside_configured_slot_is_rejected(self):
         stale_run = datetime(2026, 10, 12, 22, 36, tzinfo=main.ZoneInfo(main.TIMEZONE))
 

@@ -1,0 +1,20 @@
+{
+  "name": "macro-summary-clock",
+  "account_id": "fa4a3dd24799e1e5c632c30b069cb74d",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-20",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "vars": {
+    "ENABLED": "true",
+    "REPOSITORY": "valueinvestor456/macro-telegram-bot",
+    "WORKFLOW": "scheduled-send.yml",
+    "REF": "main"
+  },
+  "triggers": { "crons": ["* * * * *"] },
+  "durable_objects": {
+    "bindings": [{ "name": "CLOCK", "class_name": "MacroClock" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MacroClock"] }]
+}

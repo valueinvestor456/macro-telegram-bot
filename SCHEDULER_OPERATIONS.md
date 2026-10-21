@@ -2,9 +2,11 @@
 
 ## What is running
 
-[Scheduled Macro Summary Send](./.github/workflows/scheduled-send.yml) runs
-[macro_scheduler.py](./macro_scheduler.py). Times and business-day rules come
-from [main.py](./main.py), in `Asia/Bangkok`.
+[The independent Cloudflare clock](./cloud-scheduler/README.md) checks every
+minute and dispatches [Scheduled Macro Summary Send](./.github/workflows/scheduled-send.yml)
+through GitHub's API. That workflow runs [macro_scheduler.py](./macro_scheduler.py).
+The original GitHub cron is a fallback, not the primary clock. Times and holidays
+come from [macro_schedule.json](./macro_schedule.json), in `Asia/Bangkok`.
 
 - There are 24 daily slots: 09:45, then every half hour from 10:00 through 21:00.
   Additional wakeups occur at minutes 7, 22, 37 and 52 during 09:00–21:59 Thai
@@ -26,14 +28,17 @@ from [main.py](./main.py), in `Asia/Bangkok`.
   idempotency key, so exact-once delivery cannot be guaranteed across that gap.
 - After the end-of-day cutoff, the next worker checks final-round coverage. A
   missed final round produces a failed run. This is not an independent uptime
-  monitor: if GitHub never starts any worker, GitHub cannot report its own silence.
+  monitor: inspect Cloudflare's heartbeat and confirmed delivery too. A successful
+  dispatch alone does not prove that GitHub started the sender or Telegram accepted it.
 
 ## Check and recover
 
 1. Open Actions → **Scheduled Macro Summary Send**. Read its job summary, not
    just the green/red badge. `SENT` means Telegram acknowledged a message ID.
 2. Run workflow with `preview=true` (default) to validate the state store and
-   inspect work without sending or changing the ledger.
+   inspect work without sending or changing the ledger. Outside sending hours,
+   preview validates the ledger and reports `preview_idle`, without failing for
+   a previous day's missing final round. Normal runs still audit that missed round.
 3. To process a pending due slot, run with `preview=false`. It still honors
    holidays, the time window and deduplication; it does not force a duplicate.
 4. Inspect `macro_delivery.json` on branch `macro-delivery-state`. It contains
@@ -102,8 +107,10 @@ This permits coordinated fallback workers but still depends on GitHub's API.
 
 ## Maintenance and rollback
 
-- Keep the Thai holiday calendar in [main.py](./main.py) current before each new
-  year; the bundled calendar covers 2026. Check credential expiry and GitHub access.
+- Keep [the shared Thai holiday calendar](./macro_schedule.json) current before each
+  new year; the bundled calendar covers 2026. Both senders refuse unconfigured years.
+  Push the Python configuration and redeploy Cloudflare after changes. Check
+  credential expiry and GitHub access.
 - Run `python -m unittest discover -s tests` before deploying. Tests exercise
   delayed wakeups, concurrent claims, restarts, corruption/unavailable state,
   retries, and the crash window around Telegram delivery.

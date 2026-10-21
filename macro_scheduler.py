@@ -22,14 +22,14 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from main import SEND_TIMES, TIMEZONE, is_thai_bank_business_day, record_macro_delivery
+from main import SCHEDULE_CONFIG, SEND_TIMES, TIMEZONE, is_thai_bank_business_day, record_macro_delivery
 
 ROOT = Path(__file__).resolve().parent
 PREPARE_LEASE_SECONDS = 300
 MAX_ATTEMPTS = 3
 # The previous 12-slot schedule included 16:15. Preserve its delivery history
 # without scheduling new sends at that retired time.
-LEDGER_SLOTS = frozenset(SEND_TIMES) | {"16:15"}
+LEDGER_SLOTS = frozenset(SEND_TIMES) | set(SCHEDULE_CONFIG["retired_slots"])
 
 
 class StateConflict(Exception):
@@ -213,6 +213,9 @@ def tick(store, *, now_fn=thai_now, builder=build_summary, sender=deliver, previ
     slot = due_slot(now)
     state, revision = store.load()
     if not slot:
+        if preview:
+            print(f"[scheduler] no due slot {now.isoformat()}; preview only, ledger readable")
+            return "preview_idle"
         return audit_completed_day(state, now)
     day_key = now.date().isoformat()
     day = state["days"].setdefault(day_key, {"covered_through": "", "attempts": {}})

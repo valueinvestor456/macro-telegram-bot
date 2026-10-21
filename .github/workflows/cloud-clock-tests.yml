@@ -1,0 +1,19 @@
+name: Cloud clock checks
+on:
+  push:
+    branches: [main]
+    paths: ['cloud-scheduler/**', 'macro_schedule.json', '.github/workflows/cloud-clock-tests.yml']
+  pull_request:
+    paths: ['cloud-scheduler/**', 'macro_schedule.json', '.github/workflows/cloud-clock-tests.yml']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test cloud-scheduler/test/*.test.js

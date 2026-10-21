@@ -186,6 +186,14 @@ class MacroSchedulerTests(TestCase):
         self.now = self.now.replace(hour=8)
         self.assertEqual(self.tick(), "idle")
 
+    def test_preview_outside_window_validates_ledger_without_auditing_old_misses(self):
+        self.store.state["activated_on"] = "2026-10-12"
+        self.now = self.now.replace(hour=8)
+        self.assertEqual(self.tick(preview=True), "preview_idle")
+        self.assertEqual(self.store.revision, 0)
+        self.builder.assert_not_called()
+        self.sender.assert_not_called()
+
     def test_cutoff_during_data_preparation_does_not_send(self):
         self.now = self.now.replace(hour=21, minute=29)
         def build_late():

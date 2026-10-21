@@ -2,10 +2,10 @@ name: Stock digest checks
 
 on:
   pull_request:
-    paths: ['main.py', 'macro_scheduler.py', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml', '.github/workflows/scheduled-send.yml']
+    paths: ['main.py', 'macro_scheduler.py', 'macro_schedule.json', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml', '.github/workflows/scheduled-send.yml']
   push:
     branches: [main]
-    paths: ['main.py', 'macro_scheduler.py', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml', '.github/workflows/scheduled-send.yml']
+    paths: ['main.py', 'macro_scheduler.py', 'macro_schedule.json', 'stock_digest.py', 'set_news.py', 'tests/**', 'requirements.txt', '.github/workflows/stock-*.yml', '.github/workflows/scheduled-send.yml']
 
 permissions:
   contents: read
