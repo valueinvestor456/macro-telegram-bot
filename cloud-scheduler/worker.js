@@ -55,7 +55,9 @@ async function github(env, path, options = {}) {
       "Content-Type": "application/json",
       "Cache-Control": "no-cache",
     },
-    redirect: "error",
+    // Workers supports manual/follow, not the Fetch standard's error mode.
+    // Reject 3xx below without forwarding credentials to a redirect destination.
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
   if (response.status === 404 && options.allowMissing) return null;

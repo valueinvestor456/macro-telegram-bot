@@ -18,7 +18,7 @@ function fixture(t) {
   }};
   const f = {
     ctx, ledger: freshLedger(), runs: [], calls: [], paused: false,
-    ledgerError: false, postError: false,
+    ledgerError: false, ledgerRedirect: false, postError: false,
     advance(ms) { now += ms; },
     clock: new MacroClock(ctx, env),
     tick() { return this.clock.fetch(new Request("https://clock/tick", {
@@ -27,10 +27,12 @@ function fixture(t) {
   };
   t.mock.method(Date, "now", () => now);
   t.mock.method(globalThis, "fetch", async (url, options) => {
+    assert.equal(options.redirect, "manual", "Cloudflare-safe redirect mode must not forward auth");
     f.calls.push({ path: new URL(url).pathname, method: options.method || "GET", body: options.body });
     if (url.includes("/actions/variables/"))
       return f.paused ? Response.json({ value: "false" }) : Response.json({}, { status: 404 });
     if (url.includes("/contents/")) {
+      if (f.ledgerRedirect) return new Response(null, { status: 302, headers: { Location: "https://example.invalid" } });
       if (f.ledgerError) return Response.json({}, { status: 403 });
       return Response.json({ content: btoa(JSON.stringify(f.ledger)) });
     }
@@ -133,6 +135,15 @@ test("pause switch and missing ledger fail closed", async (t) => {
   f.paused = false;
   f.ledgerError = true;
   assert.equal((await f.tick()).status, "error");
+  assert.equal(f.posts().length, 0);
+});
+
+test("GitHub redirects are rejected rather than forwarding credentials", async (t) => {
+  const f = fixture(t);
+  f.ledgerRedirect = true;
+  const state = await f.tick();
+  assert.equal(state.status, "error");
+  assert.equal(state.error, "GitHub API HTTP 302");
   assert.equal(f.posts().length, 0);
 });
 
