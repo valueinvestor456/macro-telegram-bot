@@ -295,18 +295,48 @@ def format_catalyst_line(events: list | None) -> str | None:
     return f"🗞 Catalyst: {title} ในอีก {countdown} ({when_th} TH)\n   {CATALYST_DIRECTION_HINT}"
 
 
-def fetch_market_data_json() -> dict | None:
-    """PMI levels + Thai/US policy rates aren't scraped by this project --
-    pull the already-published usd/market-data.json from the deepsleep456.com
-    dashboard (refreshed hourly there) instead of duplicating that scraping
-    here. Returns None on any failure; callers degrade gracefully."""
+MARKET_DATA_URLS = (
+    "https://raw.githubusercontent.com/valueinvestor456/deepsleep456/main/usd/market-data.json",
+    "https://usd.deepsleep456.com/market-data.json",
+)
+MARKET_DATA_MAX_AGE = timedelta(hours=6)
+
+
+def _market_data_is_fresh(payload: object, now: datetime | None = None) -> bool:
+    """Never calculate a fair price from an undated or stale market snapshot."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("updated"), str):
+        return False
     try:
-        resp = requests.get("https://usd.deepsleep456.com/market-data.json", timeout=15)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        print(f"  [FAIL -> omit score/CIP] market-data.json: {type(e).__name__}: {e}", file=sys.stderr)
-        return None
+        updated = datetime.fromisoformat(payload["updated"].replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if updated.tzinfo is None:
+        return False
+    age = (now or datetime.now(timezone.utc)) - updated
+    return -timedelta(minutes=5) <= age <= MARKET_DATA_MAX_AGE
+
+
+def fetch_market_data_json() -> dict | None:
+    """Get a fresh market snapshot for the score and CIP fair-price inputs.
+
+    GitHub is the source updated by the market-data workflow. The dashboard's
+    static Cloudflare copy is only a fallback, and must pass the same age check.
+    If neither source is fresh, callers render N/A instead of a stale target.
+    """
+    for url in MARKET_DATA_URLS:
+        try:
+            resp = requests.get(url, timeout=15, headers={"Cache-Control": "no-cache"})
+            resp.raise_for_status()
+            payload = resp.json()
+            if _market_data_is_fresh(payload):
+                print(f"  [ok] market-data.json: {payload['updated']} from {url}")
+                return payload
+            updated = payload.get("updated") if isinstance(payload, dict) else None
+            print(f"  [stale -> skip] market-data.json: {updated!r} from {url}", file=sys.stderr)
+        except Exception as e:
+            print(f"  [FAIL -> try next] market-data.json from {url}: {type(e).__name__}: {e}", file=sys.stderr)
+    print("  [FAIL -> omit score/CIP] no fresh market-data.json source", file=sys.stderr)
+    return None
 
 
 def fetch_all() -> dict:
