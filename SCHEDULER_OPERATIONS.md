@@ -8,14 +8,23 @@ through GitHub's API. That workflow runs [macro_scheduler.py](./macro_scheduler.
 The original GitHub cron is a fallback, not the primary clock. Times and holidays
 come from [macro_schedule.json](./macro_schedule.json), in `Asia/Bangkok`.
 
-- There are 24 daily slots: 09:45, then every half hour from 10:00 through 21:00.
-  Additional wakeups occur at minutes 7, 22, 37 and 52 during 09:00–21:59 Thai
-  time on weekdays. The sender still checks the Thai bank holiday calendar.
-- The retired 16:15 slot remains valid in historical ledger entries, but is
-  not scheduled anymore. Keep the existing state branch when updating.
+- Effective trading day 2026-10-27: 35 slots, every half hour 08:00–16:30 and
+  19:00–03:00 next day, Asia/Bangkok. This is an immediate user-selected schedule;
+  the exchange's new morning opening itself takes effect on 2026-11-16.
+- The bank calendar applies to the trading day, not the wall-clock date after
+  midnight. Friday's night continues into Saturday; a holiday eve can continue
+  until 03:00 on the holiday, but no new session starts on the holiday. Monday
+  00:00–03:00 is not part of Monday's session. Trading-day rollover is 04:00.
+- GitHub fallback and recovery wakeups cover both windows, including Friday's
+  overnight tail (UTC Friday 17:00–20:00 is Thai Saturday 00:00–03:00).
+- Historical policies and retired slots remain valid. Keep the state branch;
+  `days` is keyed by trading date and slot ordering wraps midnight, so `00:00`
+  follows `23:30`. Old days still end at 21:00, with their original cutoff.
 - The scheduler sends only the latest due slot. At 11:20, missing 09:45,
   10:00, 10:30 and 11:00 produces one fresh summary covering through 11:00.
-- No send before 09:45, after 21:30, on bank holidays/weekends, or for a previous day.
+- No sends during the break after 16:55 and before 19:00. The last scheduled slot
+  is 03:00; recovery is allowed through 03:30 (not an additional scheduled round).
+  Never catch up a completed trading day or start a session on a non-bank day.
 - A state branch stores claims and acknowledged Telegram message IDs. State
   commits never change `main`. Concurrent writers must match the prior file SHA.
 - The same slot is not automatically sent again after success. Missing or
@@ -88,7 +97,7 @@ cron, install the project on an always-on Linux host and use
    other senders, or `--once` alongside this worker. A command receiver, if needed,
    must use `--poll-only` and must remain the only `getUpdates` receiver.
 4. Migrate that day's acknowledged slots before activating a different store, or
-   switch before 09:45 on a new business day. Different stores cannot deduplicate
+   switch during the closed window before 08:00 on a new business day. Different stores cannot deduplicate
    each other.
 5. Install the service under `/etc/systemd/system/`, reload systemd and enable it.
    SQLite is stored persistently under `/var/lib/macro-telegram-bot/`. The service
@@ -108,7 +117,9 @@ This permits coordinated fallback workers but still depends on GitHub's API.
 ## Maintenance and rollback
 
 - Keep [the shared Thai holiday calendar](./macro_schedule.json) current before each
-  new year; the bundled calendar covers 2026. Both senders refuse unconfigured years.
+  new year and after special holiday announcements; the bundled calendar covers
+  2026–2027. Official sources are recorded in the shared JSON configuration.
+  Both senders refuse unconfigured years.
   Push the Python configuration and redeploy Cloudflare after changes. Check
   credential expiry and GitHub access.
 - Run `python -m unittest discover -s tests` before deploying. Tests exercise

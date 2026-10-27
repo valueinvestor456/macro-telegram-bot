@@ -22,14 +22,15 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from main import SCHEDULE_CONFIG, SEND_TIMES, TIMEZONE, is_thai_bank_business_day, record_macro_delivery
+from main import record_macro_delivery
+from schedule_policy import (
+    LEDGER_SLOTS, TIMEZONE, bank_business_day, day_deadline, due_context,
+    policy_for_day, slot_order, trading_day,
+)
 
 ROOT = Path(__file__).resolve().parent
 PREPARE_LEASE_SECONDS = 300
 MAX_ATTEMPTS = 3
-# The previous 12-slot schedule included 16:15. Preserve its delivery history
-# without scheduling new sends at that retired time.
-LEDGER_SLOTS = frozenset(SEND_TIMES) | set(SCHEDULE_CONFIG["retired_slots"])
 
 
 class StateConflict(Exception):
@@ -59,7 +60,7 @@ def validate_state(state):
 
 
 def empty_state():
-    return {"version": 1, "activated_on": datetime.now(ZoneInfo(TIMEZONE)).date().isoformat(), "days": {}}
+    return {"version": 1, "activated_on": trading_day(thai_now()).isoformat(), "days": {}}
 
 
 class SQLiteStore:
@@ -133,33 +134,26 @@ def thai_now():
 
 
 def due_slot(now):
-    now = now.astimezone(ZoneInfo(TIMEZONE))
-    if not is_thai_bank_business_day(now):
-        return None
-    hh, mm = map(int, SEND_TIMES[-1].split(":"))
-    cutoff = now.replace(hour=hh, minute=mm, second=0, microsecond=0) + timedelta(minutes=30)
-    if now > cutoff:
-        return None
-    # Catch up to the most recent due slot, not a burst of old snapshots.
-    slots = [slot for slot in SEND_TIMES if slot <= now.strftime("%H:%M")]
-    return slots[-1] if slots else None
+    return due_context(now)[1]
 
 
 def audit_completed_day(state, now):
     """Report a missed final round when the next worker eventually wakes up."""
     local = now.astimezone(ZoneInfo(TIMEZONE))
-    last_hour, last_minute = map(int, SEND_TIMES[-1].split(":"))
-    deadline = local.replace(hour=last_hour, minute=last_minute, second=0, microsecond=0) + timedelta(minutes=30)
-    candidate = local if local > deadline else local - timedelta(days=1)
+    candidate = local.date()
     for _ in range(14):
-        if is_thai_bank_business_day(candidate):
+        if candidate.isoformat() < state.get("activated_on", local.date().isoformat()):
+            return "idle"
+        if bank_business_day(candidate) and local > day_deadline(candidate):
             break
         candidate -= timedelta(days=1)
-    day_key = candidate.date().isoformat()
-    if day_key < state.get("activated_on", local.date().isoformat()):
+    else:
         return "idle"
-    if state["days"].get(day_key, {}).get("covered_through", "") < SEND_TIMES[-1]:
-        print(f"[scheduler] missed final round: {day_key} {SEND_TIMES[-1]} (TH)", flush=True)
+    day_key = candidate.isoformat()
+    last_slot = policy_for_day(candidate)["send_times"][-1]
+    covered = state["days"].get(day_key, {}).get("covered_through", "")
+    if slot_order(candidate, covered) < slot_order(candidate, last_slot):
+        print(f"[scheduler] missed final round: {day_key} {last_slot} (TH)", flush=True)
         return "missed"
     return "idle"
 
@@ -210,16 +204,16 @@ def deliver(text):
 
 def tick(store, *, now_fn=thai_now, builder=build_summary, sender=deliver, preview=False):
     now = now_fn().astimezone(ZoneInfo(TIMEZONE))
-    slot = due_slot(now)
+    day_date, slot, _ = due_context(now)
     state, revision = store.load()
     if not slot:
         if preview:
             print(f"[scheduler] no due slot {now.isoformat()}; preview only, ledger readable")
             return "preview_idle"
         return audit_completed_day(state, now)
-    day_key = now.date().isoformat()
+    day_key = day_date.isoformat()
     day = state["days"].setdefault(day_key, {"covered_through": "", "attempts": {}})
-    if day["covered_through"] >= slot:
+    if slot_order(day_date, day["covered_through"]) >= slot_order(day_date, slot):
         return "already_sent"
     if preview:
         print(f"[scheduler] latest due slot {day_key} {slot} (TH); preview only, no send or state change")
@@ -263,7 +257,8 @@ def tick(store, *, now_fn=thai_now, builder=build_summary, sender=deliver, previ
         store.save(state, revision)
         return entry["status"]
     current = now_fn().astimezone(ZoneInfo(TIMEZONE))
-    if current.date() != now.date() or not due_slot(current) or current.timestamp() >= entry["lease_until"]:
+    current_day, current_slot, _ = due_context(current)
+    if current_day != day_date or not current_slot or current.timestamp() >= entry["lease_until"]:
         entry.update(status="retry", retry_at=current.timestamp(), reason="Preparation exceeded send window")
         store.save(state, revision)
         return "idle"

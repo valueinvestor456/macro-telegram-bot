@@ -240,3 +240,93 @@ class MacroSchedulerTests(TestCase):
         state["days"]["2026-10-14"] = {"covered_through": "99:99", "attempts": {}}
         with self.assertRaises(ValueError):
             scheduler.validate_state(state)
+
+
+class OvernightSchedulerTests(TestCase):
+    setUp = MacroSchedulerTests.setUp
+    tick = MacroSchedulerTests.tick
+    def start_new_day(self, day=27):
+        self.now = datetime(2026, 10, day, 8, tzinfo=scheduler.ZoneInfo(scheduler.TIMEZONE))
+        self.store.state["activated_on"] = self.now.date().isoformat()
+
+    def test_35_new_rounds_are_acknowledged_once_in_one_trading_day(self):
+        self.start_new_day()
+        start = self.now
+        slots = scheduler.policy_for_day(start.date())["send_times"]
+        self.assertEqual(len(slots), 35)
+        for slot in slots:
+            self.now = start.replace(hour=0) + timedelta(minutes=scheduler.slot_order(start.date(), slot))
+            self.assertEqual(self.tick(), "sent", slot)
+            self.assertEqual(self.tick(), "already_sent", slot)
+        self.assertEqual(self.sender.call_count, 35)
+        self.assertEqual(list(self.store.state["days"]), ["2026-10-27"])
+        self.assertEqual(self.store.state["days"]["2026-10-27"]["covered_through"], "03:00")
+        scheduler.validate_state(self.store.state)
+        self.now += timedelta(minutes=30, seconds=1)
+        self.assertEqual(self.tick(), "idle")
+        self.assertEqual(self.sender.call_count, 35)
+
+    def test_break_and_night_cutoff_reject_late_preparation(self):
+        for start in (datetime(2026, 10, 27, 16, 54), datetime(2026, 10, 28, 3, 29)):
+            self.store = Store()
+            self.now = start.replace(tzinfo=scheduler.ZoneInfo(scheduler.TIMEZONE))
+            def build_late():
+                self.now += timedelta(minutes=2)
+                return "summary"
+            self.builder.side_effect = build_late
+            self.assertEqual(self.tick(), "idle")
+        self.sender.assert_not_called()
+
+    def test_midnight_preparation_keeps_original_day_and_next_slot_is_not_suppressed(self):
+        self.start_new_day()
+        self.now = self.now.replace(hour=23, minute=59)
+        def across_midnight():
+            self.now += timedelta(minutes=2)
+            return "summary"
+        self.builder.side_effect = across_midnight
+        self.assertEqual(self.tick(), "sent")
+        self.builder.side_effect = None
+        self.assertEqual(self.tick(), "sent")
+        self.assertEqual(self.tick(), "already_sent")
+        day = self.store.state["days"]["2026-10-27"]
+        self.assertEqual(day["covered_through"], "00:00")
+        self.assertEqual(set(day["attempts"]), {"23:30", "00:00"})
+
+    def test_audit_waits_until_trading_day_really_finishes(self):
+        self.start_new_day()
+        self.now = self.now.replace(hour=17)
+        self.assertEqual(self.tick(), "idle")
+        self.now = self.now.replace(day=28, hour=3, minute=31)
+        self.assertEqual(self.tick(), "missed")
+        self.sender.assert_not_called()
+        self.store.state["days"]["2026-10-27"] = {"covered_through": "03:00", "attempts": {}}
+        self.assertEqual(self.tick(), "idle")
+
+    def test_old_final_round_is_still_complete_after_transition(self):
+        self.start_new_day()
+        self.now = self.now.replace(hour=7)
+        self.store.state["activated_on"] = "2026-10-26"
+        self.store.state["days"]["2026-10-26"] = {"covered_through": "21:00", "attempts": {}}
+        self.assertEqual(self.tick(), "idle")
+        self.sender.assert_not_called()
+
+    def test_fresh_overnight_ledger_audits_its_actual_first_trading_day(self):
+        self.start_new_day()
+        self.now = self.now.replace(day=28, hour=2)
+        with patch.object(scheduler, "thai_now", return_value=self.now):
+            self.store = Store()
+        self.assertEqual(self.store.state["activated_on"], "2026-10-27")
+        self.now = self.now.replace(hour=3, minute=31)
+        self.assertEqual(self.tick(), "missed")
+        self.sender.assert_not_called()
+
+    def test_existing_0945_acknowledgement_prevents_morning_backfill(self):
+        self.start_new_day()
+        self.now = self.now.replace(hour=9, minute=59)
+        self.store.state["days"]["2026-10-27"] = {
+            "covered_through": "09:45", "attempts": {"09:45": {"status": "sent", "message_id": 1274}},
+        }
+        self.assertEqual(self.tick(), "already_sent")
+        self.now = self.now.replace(hour=10, minute=0)
+        self.assertEqual(self.tick(), "sent")
+        self.sender.assert_called_once()

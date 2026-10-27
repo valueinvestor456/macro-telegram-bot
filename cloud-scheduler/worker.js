@@ -3,25 +3,55 @@ import schedule from "../macro_schedule.json" with { type: "json" };
 const MINUTE = 60_000;
 const DISPATCH_BACKOFF = 5 * MINUTE;
 const MAX_DISPATCHES = 3;
-const LEDGER_SLOTS = new Set([...schedule.send_times, ...schedule.retired_slots]);
+const LEDGER_SLOTS = new Set([
+  ...schedule.send_times,
+  ...schedule.schedule_changes.flatMap((policy) => policy.send_times),
+  ...schedule.retired_slots,
+]);
 const ACTIVE_RUNS = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
 const json = (value, status = 200) => Response.json(value, {
   status, headers: { "Cache-Control": "no-store" },
 });
 class ClockError extends Error {}
 
+const minutes = (slot) => Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3, 5));
+function policyForDay(day) {
+  let policy = schedule;
+  for (const change of schedule.schedule_changes)
+    if (day >= change.effective_from) policy = change;
+  return policy;
+}
+function slotOrder(day, slot) {
+  if (!slot) return -1;
+  const value = minutes(slot);
+  return value + (value < minutes(policyForDay(day).day_rollover) ? 1440 : 0);
+}
+
 export function dueAt(timestamp) {
   // Fixed UTC+7: Thailand has no daylight-saving transition.
   const local = new Date(timestamp + 7 * 60 * MINUTE);
-  const day = local.toISOString().slice(0, 10);
-  const time = local.toISOString().slice(11, 19);
-  if (!schedule.calendar_years.includes(local.getUTCFullYear()))
+  const calendarDay = local.toISOString().slice(0, 10);
+  const previous = new Date(local.getTime() - 24 * 60 * MINUTE).toISOString().slice(0, 10);
+  const clock = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const day = clock < minutes(policyForDay(previous).day_rollover) ? previous : calendarDay;
+  const tradingDate = new Date(`${day}T00:00:00Z`);
+  if (!schedule.calendar_years.includes(tradingDate.getUTCFullYear()))
     throw new ClockError("Holiday calendar needs updating");
-  if ([0, 6].includes(local.getUTCDay()) || schedule.bank_holidays.includes(day))
+  if ([0, 6].includes(tradingDate.getUTCDay()) || schedule.bank_holidays.includes(day))
     return { day, slot: null, reason: "bank_closed" };
-  if (time < "09:45:00" || time > "21:30:00")
-    return { day, slot: null, reason: "outside_window" };
-  return { day, slot: schedule.send_times.filter((slot) => slot <= time.slice(0, 5)).at(-1) };
+  const elapsed = clock + local.getUTCSeconds() / 60 + local.getUTCMilliseconds() / MINUTE +
+    (day === previous ? 1440 : 0);
+  const policy = policyForDay(day);
+  for (const window of policy.windows) {
+    const start = slotOrder(day, window.start);
+    const end = slotOrder(day, window.end);
+    if (start <= elapsed && elapsed <= end) {
+      const slot = policy.send_times.filter((candidate) =>
+        start <= slotOrder(day, candidate) && slotOrder(day, candidate) <= elapsed).at(-1);
+      if (slot) return { day, slot, reason: null };
+    }
+  }
+  return { day, slot: null, reason: "outside_window" };
 }
 
 export function ledgerDay(payload, day) {
@@ -127,8 +157,17 @@ export class MacroClock {
       if (state.day !== due.day) state.covered_through = "";
       state.day = due.day;
       state.due_slot = due.slot;
+      state.schedule_effective_from = policyForDay(due.day).effective_from || null;
+      state.scheduled_slots = policyForDay(due.day).send_times.length;
       if (!due.slot) return await finish(due.reason);
       const enabled = await github(this.env, "actions/variables/MACRO_SCHEDULER_ENABLED", { allowMissing: true });
+      if (enabled === null) {
+        // A single-variable 404 can also mask missing Variables permission.
+        // Confirm that this credential can read repository variables before
+        // treating the pause switch as unset.
+        const variables = await github(this.env, "actions/variables?per_page=1");
+        if (!Array.isArray(variables?.variables)) throw new ClockError("Invalid repository variable list");
+      }
       if (enabled?.value === "false") return await finish("paused");
       const file = await github(this.env, "contents/macro_delivery.json?ref=macro-delivery-state");
       let payload;
@@ -138,12 +177,13 @@ export class MacroClock {
       state.covered_through = day.covered_through;
       const acknowledged = Object.entries(day.attempts)
         .filter(([, attempt]) => attempt.status === "sent" && Number.isSafeInteger(attempt.message_id))
-        .sort(([a], [b]) => a.localeCompare(b)).at(-1);
+        .sort(([a], [b]) => slotOrder(due.day, a) - slotOrder(due.day, b)).at(-1);
       state.last_confirmed = acknowledged ? {
         day: due.day, slot: acknowledged[0], message_id: acknowledged[1].message_id,
         at: acknowledged[1].updated_at,
       } : null;
-      if (day.covered_through >= due.slot) return await finish("confirmed");
+      if (slotOrder(due.day, day.covered_through) >= slotOrder(due.day, due.slot))
+        return await finish("confirmed");
       const prior = day.attempts[due.slot];
       if (["uncertain", "failed"].includes(prior?.status)) return await finish("needs_review");
       if (prior?.retry_at * 1000 > now) return await finish("sender_backoff");
@@ -160,19 +200,19 @@ export class MacroClock {
 
       const runs = await github(this.env, `actions/workflows/${this.env.WORKFLOW}/runs?per_page=30&branch=${encodeURIComponent(this.env.REF)}`);
       if (!Array.isArray(runs.workflow_runs)) throw new ClockError("Invalid workflow run list");
-      const active = runs.workflow_runs.find((run) => ACTIVE_RUNS.has(run.status));
+      const activeRuns = runs.workflow_runs.filter((run) => ACTIVE_RUNS.has(run.status));
       state.stalled_run_id = null;
-      if (active) {
-        state.active_run_id = active.id;
-        const age = now - Date.parse(active.run_started_at || active.created_at);
-        if (age > 10 * MINUTE) {
-          // A new dispatch can replace a stuck pending concurrency entry. Never
-          // cancel an in-flight sender; its ledger and workflow concurrency stay authoritative.
-          state.stalled_run_id = active.id;
-        } else {
+      for (const active of activeRuns) {
+        const started = Date.parse(active.run_started_at || active.created_at);
+        if (!Number.isFinite(started)) throw new ClockError("Active workflow run has no valid timestamp");
+        if (now - started <= 10 * MINUTE) {
+          state.active_run_id = active.id;
           return await finish("workflow_pending");
         }
+        state.stalled_run_id ||= active.id;
       }
+      // A new dispatch can replace a stuck pending concurrency entry. Never
+      // cancel an in-flight sender; its ledger and workflow concurrency stay authoritative.
       state.active_run_id = null;
       state.last_dispatch = { key, at: now, attempts: (priorDispatch?.attempts || 0) + 1, source };
       // Persist before dispatch. An ambiguous response cannot cause a retry storm.

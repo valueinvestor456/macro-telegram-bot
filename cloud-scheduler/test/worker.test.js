@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import worker, { MacroClock, dueAt } from "../worker.js";
+import schedule from "../../macro_schedule.json" with { type: "json" };
 
 const baseTime = Date.parse("2026-10-20T12:00:00Z"); // 19:00 Thai
 const freshLedger = () => ({ version: 1, activated_on: "2026-10-15", days: {} });
@@ -18,8 +19,9 @@ function fixture(t) {
   }};
   const f = {
     ctx, ledger: freshLedger(), runs: [], calls: [], paused: false,
-    ledgerError: false, ledgerRedirect: false, postError: false,
+    ledgerError: false, ledgerRedirect: false, postError: false, variablesForbidden: false,
     advance(ms) { now += ms; },
+    setTime(iso) { now = Date.parse(iso); },
     clock: new MacroClock(ctx, env),
     tick() { return this.clock.fetch(new Request("https://clock/tick", {
       method: "POST", headers: { "X-Clock-Source": "cron" },
@@ -31,6 +33,8 @@ function fixture(t) {
     f.calls.push({ path: new URL(url).pathname, method: options.method || "GET", body: options.body });
     if (url.includes("/actions/variables/"))
       return f.paused ? Response.json({ value: "false" }) : Response.json({}, { status: 404 });
+    if (url.includes("/actions/variables?"))
+      return f.variablesForbidden ? Response.json({}, { status: 403 }) : Response.json({ variables: [] });
     if (url.includes("/contents/")) {
       if (f.ledgerRedirect) return new Response(null, { status: 302, headers: { Location: "https://example.invalid" } });
       if (f.ledgerError) return Response.json({}, { status: 403 });
@@ -55,7 +59,70 @@ test("calendar uses Thai time, opening round, half hours, holidays and cutoff", 
   assert.equal(dueAt(Date.parse("2026-10-20T14:30:01Z")).slot, null);
   assert.equal(dueAt(Date.parse("2026-10-23T03:30:00Z")).reason, "bank_closed");
   assert.equal(dueAt(Date.parse("2026-10-24T03:30:00Z")).reason, "bank_closed");
-  assert.throws(() => dueAt(Date.parse("2027-01-04T03:30:00Z")), /calendar/);
+  assert.equal(dueAt(Date.parse("2027-01-04T03:30:00Z")).slot, "10:30");
+});
+
+test("new policy serves all 35 rounds on its trading day", () => {
+  const slots = schedule.schedule_changes[0].send_times;
+  assert.equal(slots.length, 35);
+  for (const slot of slots) {
+    const followingDay = slot < "04:00";
+    const day = followingDay ? "2026-10-28" : "2026-10-27";
+    const timestamp = Date.parse(`${day}T${slot}:00+07:00`);
+    assert.deepEqual(dueAt(timestamp), { day: "2026-10-27", slot, reason: null });
+  }
+});
+
+test("breaks, cutoff and rollover boundaries do not create extra sends", () => {
+  const cases = [
+    ["2026-10-27T07:59:59+07:00", null, "outside_window"],
+    ["2026-10-27T16:55:00+07:00", "16:30", null],
+    ["2026-10-27T16:55:01+07:00", null, "outside_window"],
+    ["2026-10-27T18:59:59+07:00", null, "outside_window"],
+    ["2026-10-28T03:30:00+07:00", "03:00", null],
+    ["2026-10-28T03:30:01+07:00", null, "outside_window"],
+    ["2026-10-28T04:00:00+07:00", null, "outside_window"],
+  ];
+  for (const [iso, slot, reason] of cases) {
+    const due = dueAt(Date.parse(iso));
+    assert.equal(due.slot, slot, iso);
+    assert.equal(due.reason, reason, iso);
+    assert.equal(due.day, iso.startsWith("2026-10-28T03:") ? "2026-10-27" : iso.slice(0, 10));
+  }
+});
+
+test("night sessions use trading-day holidays and weekdays", () => {
+  assert.deepEqual(dueAt(Date.parse("2026-12-10T01:00:00+07:00")),
+    { day: "2026-12-09", slot: "01:00", reason: null }); // holiday morning
+  assert.deepEqual(dueAt(Date.parse("2026-12-10T19:00:00+07:00")),
+    { day: "2026-12-10", slot: null, reason: "bank_closed" });
+  assert.deepEqual(dueAt(Date.parse("2026-10-31T03:00:00+07:00")),
+    { day: "2026-10-30", slot: "03:00", reason: null }); // Friday session
+  assert.deepEqual(dueAt(Date.parse("2026-11-01T03:00:00+07:00")),
+    { day: "2026-10-31", slot: null, reason: "bank_closed" });
+  assert.deepEqual(dueAt(Date.parse("2026-11-02T03:00:00+07:00")),
+    { day: "2026-11-01", slot: null, reason: "bank_closed" });
+});
+
+test("policy effective date does not retroactively change the prior night", () => {
+  assert.deepEqual(dueAt(Date.parse("2026-10-23T03:00:00+07:00")),
+    { day: "2026-10-23", slot: null, reason: "bank_closed" });
+  assert.deepEqual(dueAt(Date.parse("2026-10-22T21:30:00+07:00")),
+    { day: "2026-10-22", slot: "21:00", reason: null });
+  assert.deepEqual(dueAt(Date.parse("2026-10-22T22:00:00+07:00")),
+    { day: "2026-10-22", slot: null, reason: "outside_window" });
+  assert.deepEqual(dueAt(Date.parse("2026-10-24T03:00:00+07:00")),
+    { day: "2026-10-24", slot: null, reason: "bank_closed" });
+  assert.deepEqual(dueAt(Date.parse("2026-10-27T03:00:00+07:00")),
+    { day: "2026-10-27", slot: null, reason: "outside_window" });
+  assert.deepEqual(dueAt(Date.parse("2026-10-26T21:30:00+07:00")),
+    { day: "2026-10-26", slot: "21:00", reason: null });
+  assert.equal(dueAt(Date.parse("2026-10-26T22:00:00+07:00")).slot, null);
+});
+
+test("unconfigured calendar years fail closed by trading day", () => {
+  assert.equal(dueAt(Date.parse("2028-01-01T03:00:00+07:00")).day, "2027-12-31");
+  assert.throws(() => dueAt(Date.parse("2028-01-01T04:00:00+07:00")), /calendar/);
 });
 
 test("dispatches independently, then confirms Telegram acknowledgement without resending", async (t) => {
@@ -91,6 +158,37 @@ test("already delivered by GitHub backup is not sent again", async (t) => {
   assert.equal(f.posts().length, 0);
 });
 
+test("midnight coverage and acknowledgement use trading-day slot order", async (t) => {
+  const f = fixture(t);
+  f.setTime("2026-10-28T00:30:00+07:00");
+  f.ledger.days["2026-10-27"] = {
+    covered_through: "00:30", attempts: {
+      "23:30": { status: "sent", message_id: 1 },
+      "00:30": { status: "sent", message_id: 2 },
+    },
+  };
+  const confirmed = await f.tick();
+  assert.equal(confirmed.status, "confirmed");
+  assert.equal(confirmed.day, "2026-10-27");
+  assert.equal(confirmed.last_confirmed.slot, "00:30");
+  assert.equal(f.posts().length, 0);
+  f.setTime("2026-10-28T01:00:00+07:00");
+  assert.equal((await f.tick()).last_dispatch.key, "2026-10-27/01:00");
+  assert.equal(f.posts().length, 1);
+});
+
+test("an evening acknowledgement cannot cover a later midnight slot", async (t) => {
+  const f = fixture(t);
+  f.setTime("2026-10-28T00:30:00+07:00");
+  f.ledger.days["2026-10-27"] = {
+    covered_through: "23:30", attempts: {
+      "23:30": { status: "sent", message_id: 1 },
+    },
+  };
+  assert.equal((await f.tick()).last_dispatch.key, "2026-10-27/00:30");
+  assert.equal(f.posts().length, 1);
+});
+
 test("concurrent ticks and object restart respect persisted dispatch cooldown", async (t) => {
   const f = fixture(t);
   await Promise.all([f.tick(), f.tick()]);
@@ -120,7 +218,7 @@ test("ambiguous dispatch is throttled and errors do not expose credentials", asy
 
 test("active GitHub jobs do not receive overlapping dispatches", async (t) => {
   const f = fixture(t);
-  f.runs = [{ id: 15, status: "queued" }];
+  f.runs = [{ id: 15, status: "queued", created_at: new Date(baseTime).toISOString() }];
   assert.equal((await f.tick()).status, "workflow_pending");
   assert.equal(f.posts().length, 0);
   f.runs = [];
@@ -135,6 +233,14 @@ test("pause switch and missing ledger fail closed", async (t) => {
   f.paused = false;
   f.ledgerError = true;
   assert.equal((await f.tick()).status, "error");
+  assert.equal(f.posts().length, 0);
+});
+
+test("an unset pause variable requires proof of Variables read access", async (t) => {
+  const f = fixture(t);
+  f.variablesForbidden = true;
+  const state = await f.tick();
+  assert.equal(state.status, "error");
   assert.equal(f.posts().length, 0);
 });
 
@@ -176,6 +282,10 @@ test("stale sending can be reviewed by the Python worker, not blocked forever", 
   };
   assert.equal((await f.tick()).status, "awaiting_confirmation");
   assert.equal(f.posts().length, 1);
+  f.ledger.days["2026-10-20"].attempts["18:30"] = { status: "uncertain" };
+  f.advance(5 * 60_000);
+  assert.equal((await f.tick()).status, "awaiting_confirmation");
+  assert.equal(f.posts().length, 2);
 });
 
 test("coverage without acknowledgement is reported as corrupt instead of success", async (t) => {
@@ -205,6 +315,26 @@ test("scheduler retries a stuck queue with bounded dispatch rather than blocking
   assert.equal(f.posts().length, 1);
 });
 
+test("a fresh active run blocks dispatch even when an older run is stalled", async (t) => {
+  const f = fixture(t);
+  f.runs = [
+    { id: 15, status: "queued", created_at: new Date(baseTime - 11 * 60_000).toISOString() },
+    { id: 16, status: "in_progress", run_started_at: new Date(baseTime - 60_000).toISOString() },
+  ];
+  const state = await f.tick();
+  assert.equal(state.status, "workflow_pending");
+  assert.equal(state.active_run_id, 16);
+  assert.equal(f.posts().length, 0);
+});
+
+test("an active run without a valid timestamp fails visibly", async (t) => {
+  const f = fixture(t);
+  f.runs = [{ id: 15, status: "queued" }];
+  const state = await f.tick();
+  assert.equal(state.status, "error");
+  assert.equal(f.posts().length, 0);
+});
+
 test("cooldown is preserved across half-hour boundaries", async (t) => {
   const f = fixture(t);
   f.advance(29 * 60_000);
@@ -230,6 +360,7 @@ test("public health cannot trigger delivery and private controls require authent
   const config = { ...env, CLOCK: binding };
   assert.equal((await worker.fetch(new Request("https://worker/health"), config)).status, 200);
   assert.equal((await worker.fetch(new Request("https://worker/tick", { method: "POST" }), config)).status, 404);
+  assert.equal((await worker.fetch(new Request("https://worker/check", { method: "POST" }), config)).status, 404);
   assert.equal((await worker.fetch(new Request("https://worker/status"), config)).status, 404);
   assert.equal(calls, 0);
   const response = await worker.fetch(new Request("https://worker/status", {

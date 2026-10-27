@@ -14,9 +14,16 @@ GitHub runner/API availability, market-data APIs and Telegram remain dependencie
 ## Schedule and state
 
 - Shared configuration: [macro_schedule.json](../macro_schedule.json).
-- 09:45, then every half hour 10:00–21:00, Asia/Bangkok; 24 slots on bank business days.
-- Catch up only the latest due slot, until 21:30. Never replay past days overnight.
-- Calendar is currently verified for 2026. Both clocks fail closed for unconfigured
+- From trading day 2026-10-27: every half hour 08:00–16:30 and 19:00–03:00 next
+  day, Asia/Bangkok; 35 slots per bank business day. Older policies stay readable.
+- The ledger day is the bank trading day, including its overnight tail. Friday
+  continues into Saturday, and a holiday eve into the holiday until 03:00.
+  Never start a new session on a weekend/holiday. Rollover is 04:00 Bangkok.
+- Catch up only the latest due slot within its session: until 16:55 by day and
+  until 03:30 for the last 03:00 round. No new 03:30 round or sends in the break.
+- Compare slot coverage in trading-day order, not lexicographic wall-clock time:
+  `00:00` follows `23:30`. Never replay completed trading days.
+- Calendar is currently verified for 2026–2027. Both clocks fail closed for unconfigured
   years; update the dates and `calendar_years`, push Python and redeploy this Worker.
 - The singleton Durable Object stores heartbeats, dispatch cooldowns and the last
   acknowledged delivery. The GitHub `macro-delivery-state` branch remains the sole

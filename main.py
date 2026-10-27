@@ -1,4 +1,4 @@
-"""Macro summary -> Telegram bot, scheduled 24x daily (Thailand time).
+"""Macro summary -> Telegram bot, with Bangkok bank-day and overnight schedules.
 
 Fetches DXY / GOLD / US10Y / TH10Y / USDTHB / BDI, formats a summary message,
 and sends it via the Telegram Bot API at the configured Asia/Bangkok times.
@@ -28,6 +28,10 @@ import requests
 import schedule
 import yfinance as yf
 from bs4 import BeautifulSoup
+from schedule_policy import (
+    ALL_SLOTS, HOLIDAYS, SCHEDULE_CONFIG, TIMEZONE, bank_business_day,
+    day_start, due_context, policy_for_day, trading_day,
+)
 
 # Windows consoles often default to a legacy codepage (cp874 on Thai systems)
 # that can't print emoji — force UTF-8 so --once test output doesn't crash.
@@ -60,16 +64,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 AUTO_DETECT_CHAT_ID_PATH = Path(__file__).with_name("telegram_chat_id.json")
 
 # Shared with the independent Cloudflare clock; deploy both after calendar edits.
-SCHEDULE_CONFIG = json.loads(Path(__file__).with_name("macro_schedule.json").read_text(encoding="utf-8"))
-SEND_TIMES = SCHEDULE_CONFIG["send_times"]
-TIMEZONE = SCHEDULE_CONFIG["timezone"]
+SEND_TIMES = policy_for_day(datetime.now(ZoneInfo(TIMEZONE)).date())["send_times"]
 SEND_TIME_TOLERANCE_MINUTES = 10
 SEND_LATE_TOLERANCE_MINUTES = 30
 
-# Bank holidays published by the Bank of Thailand for Buddhist year 2569
-# (Gregorian 2026), including the special Bangkok holiday on 16 October.
+# Bank holidays published by the Bank of Thailand for Buddhist years 2569-2570
+# (2026-2027), including the special Bangkok holiday on 16 October 2026.
 # Update this set when BOT publishes the next year's calendar.
-THAI_BANK_HOLIDAYS = frozenset(date.fromisoformat(day) for day in SCHEDULE_CONFIG["bank_holidays"])
+THAI_BANK_HOLIDAYS = HOLIDAYS
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -89,9 +91,7 @@ def is_thai_bank_business_day(now: datetime | None = None) -> bool:
     """Return whether *now* is a Thai bank business day in Bangkok time."""
     now = now or datetime.now(ZoneInfo(TIMEZONE))
     local_date = now.astimezone(ZoneInfo(TIMEZONE)).date()
-    if local_date.year not in SCHEDULE_CONFIG["calendar_years"]:
-        raise ValueError("Thai bank holiday calendar needs updating")
-    return local_date.weekday() < 5 and local_date not in THAI_BANK_HOLIDAYS
+    return bank_business_day(local_date)
 
 
 def is_expected_scheduled_macro_time(now: datetime | None = None) -> bool:
@@ -103,10 +103,13 @@ def is_expected_scheduled_macro_time(now: datetime | None = None) -> bool:
 
     now = now or datetime.now(ZoneInfo(TIMEZONE))
     local_now = now.astimezone(ZoneInfo(TIMEZONE))
+    policy = policy_for_day(trading_day(local_now))
+    if policy["day_rollover"] != "00:00":
+        return due_context(local_now)[1] is not None
     current_minutes = local_now.hour * 60 + local_now.minute
     scheduled_minutes = [
         int(hour) * 60 + int(minute)
-        for hour, minute in (slot.split(":") for slot in SEND_TIMES)
+        for hour, minute in (slot.split(":") for slot in policy["send_times"])
     ]
     return any(
         -SEND_TIME_TOLERANCE_MINUTES <= current_minutes - slot <= SEND_LATE_TOLERANCE_MINUTES
@@ -878,7 +881,8 @@ def record_macro_delivery(status: str, reason: str) -> None:
 
 
 def job() -> bool | None:
-    if not is_thai_bank_business_day():
+    now = datetime.now(ZoneInfo(TIMEZONE))
+    if not is_thai_bank_business_day(day_start(trading_day(now))):
         record_macro_delivery("SKIPPED", "Thai bank holiday/weekend; no message sent")
         return None
     if not is_expected_scheduled_macro_time():
@@ -1243,6 +1247,13 @@ def poll_commands() -> None:
 # ---------------------------------------------------------------------------
 # 4) SCHEDULER
 # ---------------------------------------------------------------------------
+def scheduled_macro_job(slot):
+    # Register the union of policy times so a long-running local process can
+    # switch policies without restarting. Retired slots never trigger a send.
+    if due_context(datetime.now(ZoneInfo(TIMEZONE)))[1] == slot:
+        return job()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="run one fetch+send now, then exit")
@@ -1266,8 +1277,8 @@ def main():
         return
 
     if not args.poll_only:
-        for t in SEND_TIMES:
-            schedule.every().day.at(t, TIMEZONE).do(job)
+        for t in sorted(ALL_SLOTS):
+            schedule.every().day.at(t, TIMEZONE).do(scheduled_macro_job, t)
     # GitHub has a dedicated daily stock workflow with persistent dedup state.
     # Local installations use the same two stock rounds as GitHub.
     if not args.poll_only and os.environ.get("GITHUB_ACTIONS") != "true":
