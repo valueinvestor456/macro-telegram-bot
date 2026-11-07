@@ -157,7 +157,8 @@ def summarize(news: list[dict], now: datetime) -> list[dict]:
         "https://api.openai.com/v1/responses",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={"model": os.environ.get("DAILY_BRIEF_MODEL", "gpt-5.6-luna"), "instructions": instructions,
-              "input": json.dumps({"generated_at_bangkok": now.astimezone(BANGKOK).isoformat(), "news": evidence}, ensure_ascii=False),
+              "input": "Return JSON only in the requested format. Source data:\n" + json.dumps(
+                  {"generated_at_bangkok": now.astimezone(BANGKOK).isoformat(), "news": evidence}, ensure_ascii=False),
               "text": {"format": {"type": "json_object"}}, "max_output_tokens": 2200, "store": False},
         timeout=(10, 75),
     )
