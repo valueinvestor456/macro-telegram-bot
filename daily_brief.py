@@ -161,6 +161,15 @@ def summarize(news: list[dict], now: datetime) -> list[dict]:
               "text": {"format": {"type": "json_object"}}, "max_output_tokens": 2200, "store": False},
         timeout=(10, 75),
     )
+    if not response.ok:
+        try:
+            error = response.json().get("error", {})
+            detail = " | ".join(str(error.get(field, "")) for field in ("type", "code", "param", "message") if error.get(field))
+        except (ValueError, AttributeError):
+            detail = ""
+        detail = re.sub(r"\b(?:sk|rk)-[A-Za-z0-9_-]{8,}\b", "[redacted]", detail)[:400]
+        if detail:
+            print(f"[brief] OpenAI API rejected the request: {detail}", file=sys.stderr)
     response.raise_for_status()
     payload = response.json()
     text = "\n".join(content.get("text", "") for output in payload.get("output", [])
