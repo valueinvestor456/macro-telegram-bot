@@ -14,6 +14,13 @@ const json = (value, status = 200) => Response.json(value, {
 });
 class ClockError extends Error {}
 
+export function dailyBriefDue(timestamp) {
+  const local = new Date(timestamp + 7 * 60 * MINUTE);
+  const date = local.toISOString().slice(0, 10);
+  const minute = local.getUTCHours() * 60 + local.getUTCMinutes();
+  return minute >= 7 * 60 + 45 && minute <= 7 * 60 + 49 ? date : null;
+}
+
 const minutes = (slot) => Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3, 5));
 function policyForDay(day) {
   let policy = schedule;
@@ -106,12 +113,55 @@ export class MacroClock {
     const path = new URL(request.url).pathname;
     if (request.method === "GET" && path === "/status")
       return json(await this.ctx.storage.get("status") || { status: "not_started" });
-    if (request.method !== "POST" || !["/tick", "/check"].includes(path)) return json({ error: "Not found" }, 404);
+    if (request.method !== "POST" || !["/tick", "/check", "/brief"].includes(path)) return json({ error: "Not found" }, 404);
     const source = request.headers.get("X-Clock-Source") === "cron" ? "cron" : "manual";
     // Serialise async network operations within the singleton.
-    const result = this.pending.then(() => path === "/check" ? this.check() : this.tick(source));
+    const result = this.pending.then(() => path === "/check" ? this.check() : path === "/brief" ? this.brief(source) : this.tick(source));
     this.pending = result.catch(() => {});
     return json(await result);
+  }
+
+  async brief(source) {
+    const now = Date.now();
+    const day = dailyBriefDue(now);
+    const state = await this.ctx.storage.get("status") || {};
+    state.last_brief_tick_at = new Date(now).toISOString();
+    if (source === "cron") state.brief_cron_ticks = (state.brief_cron_ticks || 0) + 1;
+    if (!day) {
+      state.brief_status = "outside_window";
+      await this.ctx.storage.put("status", state);
+      return state;
+    }
+    if (state.last_brief_dispatch?.day === day) {
+      state.brief_status = "already_dispatched";
+      await this.ctx.storage.put("status", state);
+      return state;
+    }
+    if (this.env.ENABLED !== "true") {
+      state.brief_status = "paused";
+      await this.ctx.storage.put("status", state);
+      return state;
+    }
+    if (!this.env.GH_DISPATCH_TOKEN || !this.env.BRIEF_WORKFLOW)
+      throw new ClockError("Daily brief dispatch is not configured");
+    state.last_brief_dispatch = { day, at: now, source, status: "dispatching" };
+    state.brief_status = "dispatching";
+    await this.ctx.storage.put("status", state);
+    try {
+      await github(this.env, `actions/workflows/${this.env.BRIEF_WORKFLOW}/dispatches`, {
+        method: "POST", body: JSON.stringify({ ref: this.env.REF }),
+      });
+      state.last_brief_dispatch.status = "dispatched";
+      state.brief_status = "dispatched";
+    } catch {
+      // The dispatch response can be ambiguous. Do not risk a duplicate brief.
+      state.last_brief_dispatch.status = "uncertain";
+      state.brief_status = "uncertain";
+      await this.ctx.storage.put("status", state);
+      throw new ClockError("Daily brief dispatch outcome is uncertain");
+    }
+    await this.ctx.storage.put("status", state);
+    return state;
   }
 
   async check() {
@@ -244,6 +294,11 @@ async function authorized(request, env) {
 export default {
   async scheduled(controller, env) {
     // Use actual invocation time, never a stale scheduledTime to replay old slots.
+    const briefResponse = await env.CLOCK.getByName("macro").fetch(new Request("https://clock/brief", {
+      method: "POST", headers: { "X-Clock-Source": "cron" },
+    }));
+    const briefState = await briefResponse.json();
+    if (briefState.brief_status === "uncertain") throw new Error("Daily brief dispatch is uncertain");
     const response = await env.CLOCK.getByName("macro").fetch(new Request("https://clock/tick", {
       method: "POST", headers: { "X-Clock-Source": "cron" },
     }));

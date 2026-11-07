@@ -39,6 +39,14 @@ GitHub runner/API availability, market-data APIs and Telegram remain dependencie
 Worker account: `fa4a3dd24799e1e5c632c30b069cb74d`, the existing bot Cloudflare account.
 This is separate from the website's domain account and changes no website routes.
 
+The same every-minute cron also dispatches the separate `daily-brief.yml` workflow
+once per Bangkok calendar day during 07:45–07:49. Its Durable Object records the
+day before dispatch and will not send the same day's brief twice after an
+ambiguous GitHub API response. It uses the existing GitHub Actions write token;
+the workflow itself needs the repository's `OPENAI_API_KEY` Actions secret in
+addition to the existing Telegram secrets. This daily brief runs on weekends and
+Thai bank holidays and is independent of the intraday macro ledger/pause policy.
+
 1. Run `node --test cloud-scheduler/test/*.test.js` and
    `python -m unittest discover -s tests` from the repository root.
 2. Push the shared configuration/Python changes to `main`.

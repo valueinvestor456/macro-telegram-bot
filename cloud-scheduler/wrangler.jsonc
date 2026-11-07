@@ -10,6 +10,7 @@
     "ENABLED": "true",
     "REPOSITORY": "valueinvestor456/macro-telegram-bot",
     "WORKFLOW": "scheduled-send.yml",
+    "BRIEF_WORKFLOW": "daily-brief.yml",
     "REF": "main"
   },
   "triggers": { "crons": ["* * * * *"] },

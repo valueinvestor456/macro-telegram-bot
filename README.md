@@ -1,5 +1,23 @@
 # Macro Telegram Bot
 
+## Morning world-economy brief
+
+The independent Cloudflare clock dispatches [daily-brief.yml](./.github/workflows/daily-brief.yml)
+every day at 07:45 Asia/Bangkok. The sender compiles the previous 24 hours of
+CNBC, Bloomberg Markets/Economics, Federal Reserve monetary-policy releases and
+ECB press releases, then adds today's Forex Factory calendar in Bangkok time.
+News summaries are grounded in feed titles/descriptions, with links to the
+original sources and a short, conditional market-impact tag. The AI path uses
+the OpenAI Responses API; configure the GitHub Actions secret
+`OPENAI_API_KEY` before enabling the workflow. Telegram credentials reuse the
+existing `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets. No weekend or
+holiday skip is applied to this briefing.
+
+The Cloudflare clock is the primary trigger; the GitHub workflow is
+`workflow_dispatch`-only to avoid duplicate scheduled dispatches. A missed
+Cloudflare window does not replay an old day's brief. See
+[scheduler operations](./cloud-scheduler/README.md) for deployment and status.
+
 ## Thai Stock Updates — สรุปใหม่สำหรับติดตามการลงทุน
 
 - ส่งวันละสองรอบ **09:00 และ 14:00 Asia/Bangkok** ผ่าน `stock-digest.yml` (GitHub อาจเริ่มงานช้ากว่า cron)
