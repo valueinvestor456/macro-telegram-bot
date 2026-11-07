@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import escape, unescape
+import json
 import os
 import re
 import sys
@@ -177,6 +178,67 @@ def summarize(news: list[dict], now: datetime) -> list[dict]:
     return ranked[:6]
 
 
+def translate_and_analyze(items: list[dict]) -> list[dict]:
+    """Create concise, source-grounded Thai headlines, summaries, and impact tags with Gemini."""
+    if not items:
+        return []
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY secret is not configured")
+
+    source_items = [{
+        "id": item["id"], "source": item["source"], "title": item["title"],
+        "description": item["description"],
+    } for item in items]
+    prompt = (
+        "คุณเป็นบรรณาธิการข่าวเศรษฐกิจสำหรับสรุป Telegram ภาษาไทย "
+        "เรียบเรียงข่าวต่อไปนี้เป็นภาษาไทยทั้งหมด กระชับ ชัดเจน เป็นข้อๆ "
+        "ยึดเฉพาะข้อมูลในชื่อข่าวและคำอธิบาย ห้ามแต่งตัวเลข เหตุการณ์ หรือคำพูด "
+        "หากข้อมูลไม่พอให้สรุปอย่างระมัดระวัง ห้ามคาดเดา/ฟันธงผลตลาด\n"
+        "คืน JSON ตาม schema นี้เท่านั้น: {\"items\":[{\"id\":string,"
+        "\"title_th\":string,\"summary_th\":string,\"tags\":[string]}]}\n"
+        "รักษา id ให้ตรงกับต้นฉบับทุกชิ้น; title_th เป็นพาดหัวไทย; summary_th "
+        "เป็น 1-2 ประโยคไม่เกิน 240 ตัวอักษร; tags เลือกได้เฉพาะจาก "
+        "#หนุนทอง #กดดันทองคำ #หนุนดอลลาร์ #กดดันดอลลาร์ #หนุนบาท #กดดันบาท "
+        "และให้ [] เมื่อทิศทางไม่ได้ระบุหรือหลักฐานไม่ชัดเจน. "
+        "แท็กสะท้อนผลกระทบที่มีเหตุผลจากข้อมูล ไม่ใช่คำแนะนำลงทุน.\n"
+        f"ข่าว: {json.dumps(source_items, ensure_ascii=False)}"
+    )
+    response = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
+        headers={"x-goog-api-key": api_key, **HEADERS},
+        json={"contents": [{"parts": [{"text": prompt}]}],
+              "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}},
+        timeout=(10, 45),
+    )
+    if not response.ok:
+        # Do not include response bodies: API errors may echo sensitive request details.
+        raise RuntimeError(f"Gemini API returned HTTP {response.status_code}")
+    try:
+        content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        generated = json.loads(content)
+        generated_items = generated["items"]
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError("Gemini returned an invalid Thai brief response") from exc
+
+    by_id = {entry.get("id"): entry for entry in generated_items if isinstance(entry, dict)}
+    allowed_tags = {"#หนุนทอง", "#กดดันทองคำ", "#หนุนดอลลาร์", "#กดดันดอลลาร์", "#หนุนบาท", "#กดดันบาท"}
+    result = []
+    for item in items:
+        translated = by_id.get(item["id"])
+        if not translated:
+            raise RuntimeError("Gemini omitted a news item; refusing to send an incomplete brief")
+        title = clean(str(translated.get("title_th", "")), 240)
+        summary = clean(str(translated.get("summary_th", "")), 600)
+        tags = translated.get("tags", [])
+        is_thai = lambda value: any("\u0e00" <= char <= "\u0e7f" for char in value)
+        if not title or not summary or not is_thai(title) or not is_thai(summary) or not isinstance(tags, list):
+            raise RuntimeError("Gemini returned an incomplete Thai news item")
+        result.append({**item, "title": title, "summary": summary,
+                       "tags": [tag for tag in tags if isinstance(tag, str) and tag in allowed_tags]})
+    return result
+
+
 def calendar_table(events: list[dict], total_count: int | None = None) -> str:
     if not events:
         if total_count:
@@ -214,7 +276,7 @@ def render(items: list[dict], events: list[dict], now: datetime) -> str:
                            f"แหล่งข่าว: <a href=\"{url}\">{source}</a>"])
         output.extend(["", "<b>🗓️ ตารางประกาศสำคัญวันนี้ (Forex Factory, เวลาไทย)</b>",
                        "<pre>" + escape(calendar_table(agenda, len(events))) + "</pre>",
-                       "", "หมายเหตุ: ใช้หัวข้อ/คำอธิบายจาก RSS โดยตรง; แท็กเป็นการจับคำสำคัญ อาจไม่ครอบคลุมบริบท",
+                       "", "หมายเหตุ: สรุปและแปลเป็นไทยด้วย Gemini โดยอ้างอิงเฉพาะหัวข้อ/คำอธิบาย RSS; แท็กเป็นการประเมินผลกระทบเบื้องต้น",
                        "วิเคราะห์ตามข้อมูลที่เผยแพร่ ณ เวลาจัดทำ ไม่ใช่คำแนะนำลงทุน"])
         return "\n".join(output)
 
@@ -251,7 +313,9 @@ def main() -> int:
     try:
         news = fetch_news(now)
         events = fetch_calendar(now)
-        text = render(summarize(news, now), events, now)
+        selected = summarize(news, now)
+        thai_news = translate_and_analyze(selected)
+        text = render(thai_news, events, now)
         if os.environ.get("DAILY_BRIEF_DRY_RUN", "false").lower() == "true":
             print(BeautifulSoup(text, "html.parser").get_text())
             return 0

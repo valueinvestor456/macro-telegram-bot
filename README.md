@@ -10,11 +10,12 @@ including announced special holidays. Its checked-in calendar currently covers
 The sender compiles the previous 24 hours of
 CNBC, Bloomberg Markets/Economics, Federal Reserve monetary-policy releases and
 ECB press releases, then adds today's Forex Factory calendar in Bangkok time.
-News summaries are grounded in feed titles/descriptions, with links to the
-original sources and a conservative keyword-based market-impact tag. This RSS-only
-path does not call an LLM or require an OpenAI API key; descriptions come directly
-from the feeds and the report labels its tags as keyword-based. Telegram credentials
-reuse the existing `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets. Holiday dates are
+News headlines and descriptions are translated and summarized in Thai by Gemini
+Flash-Lite, grounded only in the RSS source text, with source links and cautious
+impact tags. Add a GitHub Actions secret named `GEMINI_API_KEY` from Google AI
+Studio; Telegram credentials reuse the existing `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` secrets. Gemini free-tier availability and rate limits depend
+on the selected model and account. Holiday dates are
 based on the [BOT financial-institution holiday calendar](https://www.bot.or.th/th/financial-institutions-holiday.html)
 and should be refreshed when BOT publishes a new year.
 

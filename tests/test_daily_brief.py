@@ -12,16 +12,37 @@ class DailyBriefTests(unittest.TestCase):
             "published": published, "url": "https://example.com/story",
         }
 
-    def test_rss_selection_and_tags_need_no_openai_key(self):
+    def test_rss_selection_filters_irrelevant_news(self):
         news = [
             self.item("Dollar gains as gold falls", "The dollar gains and gold falls after the data."),
             self.item("Celebrity announces a new album", "A music release, not related to finance."),
         ]
-        with patch.object(brief.requests, "post", side_effect=AssertionError("RSS mode must not call an LLM")):
-            result = brief.summarize(news, datetime.now(timezone.utc))
+        result = brief.summarize(news, datetime.now(timezone.utc))
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["tags"], ["#กดดันทองคำ", "#หนุนดอลลาร์"])
         self.assertEqual(result[0]["summary"], news[0]["description"])
+
+    def test_gemini_translates_news_and_limits_impact_tags(self):
+        news = [self.item("Dollar gains", "Dollar rises after data.")]
+        payload = {"candidates": [{"content": {"parts": [{"text": (
+            '{"items":[{"id":"n1","title_th":"ดอลลาร์แข็งค่าหลังข้อมูลเศรษฐกิจ",'
+            '"summary_th":"ดอลลาร์ปรับขึ้นหลังรายงานข้อมูลเศรษฐกิจ",'
+            '"tags":["#หนุนดอลลาร์","#unapproved"]}]}'
+        )}]}}]}
+        response = type("Response", (), {"ok": True, "json": lambda self: payload})()
+        with (
+            patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
+            patch.object(brief.requests, "post", return_value=response) as post,
+        ):
+            translated = brief.translate_and_analyze(news)
+        self.assertEqual(translated[0]["title"], "ดอลลาร์แข็งค่าหลังข้อมูลเศรษฐกิจ")
+        self.assertEqual(translated[0]["tags"], ["#หนุนดอลลาร์"])
+        self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
+
+    def test_gemini_key_is_required_when_there_are_news_items(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "GEMINI_API_KEY"):
+                brief.translate_and_analyze([self.item("Dollar gains")])
 
     def test_conflicting_price_direction_does_not_assign_tag(self):
         result = brief.summarize(
