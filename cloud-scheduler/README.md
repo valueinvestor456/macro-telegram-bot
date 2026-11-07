@@ -40,12 +40,18 @@ Worker account: `fa4a3dd24799e1e5c632c30b069cb74d`, the existing bot Cloudflare 
 This is separate from the website's domain account and changes no website routes.
 
 The same every-minute cron also dispatches the separate `daily-brief.yml` workflow
-once per Bangkok calendar day during 07:45–07:49. Its Durable Object records the
-day before dispatch and will not send the same day's brief twice after an
-ambiguous GitHub API response. It uses the existing GitHub Actions write token;
-the workflow itself needs the repository's `OPENAI_API_KEY` Actions secret in
-addition to the existing Telegram secrets. This daily brief runs on weekends and
-Thai bank holidays and is independent of the intraday macro ledger/pause policy.
+once per Bangkok calendar day during 07:45–07:49, but only on BOT financial-
+institution business days. The Worker skips weekends and the published BOT bank
+holidays, including special holidays. Its calendar currently covers 2026–2027;
+unknown years fail closed until the next BOT calendar is added. Refresh
+`BOT_FINANCIAL_HOLIDAYS` and `BOT_HOLIDAY_YEARS` in `worker.js` from the
+[official BOT holiday list](https://www.bot.or.th/th/financial-institutions-holiday.html)
+when the next annual schedule is published. The Durable Object records the day
+before dispatch and will not send the same day's brief twice after an ambiguous
+GitHub API response. It uses the existing GitHub Actions write token; the
+workflow itself needs the repository's `OPENAI_API_KEY` Actions secret in
+addition to the existing Telegram secrets. The daily brief is independent of
+the intraday macro ledger/pause policy.
 
 1. Run `node --test cloud-scheduler/test/*.test.js` and
    `python -m unittest discover -s tests` from the repository root.

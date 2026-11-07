@@ -3,15 +3,20 @@
 ## Morning world-economy brief
 
 The independent Cloudflare clock dispatches [daily-brief.yml](./.github/workflows/daily-brief.yml)
-every day at 07:45 Asia/Bangkok. The sender compiles the previous 24 hours of
+at 07:45 Asia/Bangkok on Bank of Thailand financial-institution business days
+only. The clock skips weekends and the BOT-published annual bank holidays,
+including announced special holidays. Its checked-in calendar currently covers
+2026–2027 and fails closed for later years until the next BOT calendar is added.
+The sender compiles the previous 24 hours of
 CNBC, Bloomberg Markets/Economics, Federal Reserve monetary-policy releases and
 ECB press releases, then adds today's Forex Factory calendar in Bangkok time.
 News summaries are grounded in feed titles/descriptions, with links to the
 original sources and a short, conditional market-impact tag. The AI path uses
 the OpenAI Responses API; configure the GitHub Actions secret
 `OPENAI_API_KEY` before enabling the workflow. Telegram credentials reuse the
-existing `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets. No weekend or
-holiday skip is applied to this briefing.
+existing `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` secrets. Holiday dates are
+based on the [BOT financial-institution holiday calendar](https://www.bot.or.th/th/financial-institutions-holiday.html)
+and should be refreshed when BOT publishes a new year.
 
 The Cloudflare clock is the primary trigger; the GitHub workflow is
 `workflow_dispatch`-only to avoid duplicate scheduled dispatches. A missed

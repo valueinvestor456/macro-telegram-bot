@@ -9,16 +9,40 @@ const LEDGER_SLOTS = new Set([
   ...schedule.retired_slots,
 ]);
 const ACTIVE_RUNS = new Set(["queued", "in_progress", "waiting", "pending", "requested"]);
+// BOT financial-institution holiday calendar. Refresh this set when BOT publishes
+// each new year's schedule; unknown years fail closed in dailyBriefDecision.
+const BOT_HOLIDAY_YEARS = new Set([2026, 2027]);
+const BOT_FINANCIAL_HOLIDAYS = new Set([
+  "2026-01-01", "2026-01-02", "2026-03-03", "2026-04-06",
+  "2026-04-13", "2026-04-14", "2026-04-15", "2026-05-01", "2026-05-04",
+  "2026-06-01", "2026-06-03", "2026-07-28", "2026-07-29", "2026-08-12",
+  "2026-10-13", "2026-10-16", "2026-10-23", "2026-12-07", "2026-12-10", "2026-12-31",
+  "2027-01-01", "2027-02-22", "2027-04-06", "2027-04-13", "2027-04-14",
+  "2027-04-15", "2027-05-03", "2027-05-04", "2027-05-20", "2027-06-03",
+  "2027-07-19", "2027-07-28", "2027-08-12", "2027-10-13", "2027-10-25",
+  "2027-12-06", "2027-12-10", "2027-12-31",
+]);
 const json = (value, status = 200) => Response.json(value, {
   status, headers: { "Cache-Control": "no-store" },
 });
 class ClockError extends Error {}
 
 export function dailyBriefDue(timestamp) {
+  return dailyBriefDecision(timestamp).day;
+}
+
+function dailyBriefDecision(timestamp) {
   const local = new Date(timestamp + 7 * 60 * MINUTE);
   const date = local.toISOString().slice(0, 10);
   const minute = local.getUTCHours() * 60 + local.getUTCMinutes();
-  return minute >= 7 * 60 + 45 && minute <= 7 * 60 + 49 ? date : null;
+  if (minute < 7 * 60 + 45 || minute > 7 * 60 + 49)
+    return { day: null, reason: "outside_window" };
+  const year = Number(date.slice(0, 4));
+  if (!BOT_HOLIDAY_YEARS.has(year))
+    return { day: null, reason: "holiday_calendar_unavailable" };
+  if ([0, 6].includes(local.getUTCDay()) || BOT_FINANCIAL_HOLIDAYS.has(date))
+    return { day: null, reason: "bot_non_business_day" };
+  return { day: date, reason: null };
 }
 
 const minutes = (slot) => Number(slot.slice(0, 2)) * 60 + Number(slot.slice(3, 5));
@@ -123,12 +147,13 @@ export class MacroClock {
 
   async brief(source) {
     const now = Date.now();
-    const day = dailyBriefDue(now);
+    const due = dailyBriefDecision(now);
+    const day = due.day;
     const state = await this.ctx.storage.get("status") || {};
     state.last_brief_tick_at = new Date(now).toISOString();
     if (source === "cron") state.brief_cron_ticks = (state.brief_cron_ticks || 0) + 1;
     if (!day) {
-      state.brief_status = "outside_window";
+      state.brief_status = due.reason;
       await this.ctx.storage.put("status", state);
       return state;
     }
