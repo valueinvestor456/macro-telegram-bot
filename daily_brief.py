@@ -92,8 +92,13 @@ def parse_thb_impact(value: object) -> dict:
 def validate_fact_numbers(text: str, source: str) -> None:
     """Do not introduce probabilities, dates or prices absent from the supplied source."""
     numbers = lambda value: {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", value)}
-    if numbers(text) - numbers(source):
-        raise RuntimeError("Generated news facts contain numbers absent from the source")
+    source_numbers = numbers(source)
+    # Thai dates may legitimately render a supplied Gregorian year in Buddhist Era.
+    source_numbers |= {str(int(number) + 543) for number in source_numbers
+                       if number.isdigit() and 1900 <= int(number) <= 2100}
+    unsupported = numbers(text) - source_numbers
+    if unsupported:
+        raise RuntimeError("Generated news facts contain numbers absent from the source: " + ", ".join(sorted(unsupported)))
 
 
 def call_gemini(prompt: str, schema: dict | None = None) -> dict:
@@ -137,7 +142,22 @@ def extract_source_facts(items: list[dict]) -> dict[str, dict]:
         "วันที่ อายุพันธบัตร หรือราคาที่ไม่มีในต้นฉบับ. ห้ามนำความรู้จากข่าวอื่นมาปะปน.\n"
         f"ต้นฉบับ: {json.dumps(sources, ensure_ascii=False)}"
     )
-    generated = call_gemini(prompt, schema=FACT_SCHEMA)
+    for attempt in range(2):
+        generated = call_gemini(prompt, schema=FACT_SCHEMA)
+        try:
+            return validate_source_facts(items, generated)
+        except RuntimeError as exc:
+            if attempt:
+                raise
+            print(f"[brief] correcting source facts: {exc}", file=sys.stderr)
+            prompt += (
+                "\nคำตอบครั้งก่อนตรวจไม่ผ่าน: " + str(exc) +
+                "\nสกัดใหม่จากต้นฉบับข้างต้นเท่านั้น ลบตัวเลขที่ไม่มีในต้นฉบับ "
+                "ไม่เติมวันที่หรือโอกาสดอกเบี้ยจากความรู้เดิม และคัด quote ตามตัวอักษร."
+            )
+
+
+def validate_source_facts(items: list[dict], generated: object) -> dict[str, dict]:
     entries = generated.get("facts") if isinstance(generated, dict) else None
     if not isinstance(entries, list):
         raise RuntimeError("Gemini omitted source fact extraction; expected facts array")
@@ -357,6 +377,10 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "ตรวจ source_facts และ quote เทียบต้นฉบับก่อนเขียน; รักษาสาเหตุ ความไม่แน่นอน และสถานะ priced_in "
         "ห้ามเปลี่ยน 'ตลาดรับรู้การขึ้นดอกเบี้ยแล้ว' เป็น 'วงจรขึ้นดอกเบี้ยใกล้จบ'. "
         "ห้ามอ้างว่าค่า hedging แพงขึ้นหรือมี risk premium เพิ่ม หากต้นฉบับไม่ระบุ. "
+        "แยกคำอธิบายของแต่ละสำนักข่าว ถ้าแหล่งหนึ่งระบุว่าคาดขึ้นดอกเบี้ยอีกไม่กี่ครั้ง "
+        "ห้ามเปลี่ยนเองเป็นอีกแหล่งรายงานว่า priced_in หรือกลับกัน. "
+        "เมื่อมีรายงานขัดแย้งกันให้ระบุแหล่งและข้อแตกต่าง ไม่ผสมเป็นสาเหตุเดียว "
+        "และห้ามอ้างว่าตรวจ Reuters หรือบทความเต็มแล้วหากไม่มีข้อความนั้นในข้อมูลที่ให้. "
         "แนวรับ/แนวต้าน หรือถ้อยแถลง หากข้อมูลไม่พอให้ระบุว่าไม่มีข้อมูลพอยืนยัน "
         "แยกข้อเท็จจริงในข่าวออกจากการประเมินผลกระทบ ห้ามฟันธงราคาหรืออ้างว่าตลาดตอบสนองแล้วหาก RSS ไม่ระบุ. "
         "ต้องวิเคราะห์ผลต่อเงินบาทของทุกข่าว อนุญาตให้อนุมานแบบมีเงื่อนไขด้วยกลไกเศรษฐกิจ "
@@ -441,7 +465,7 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         # Keep attributed facts from the extraction stage separate from market inference.
         summary = source_facts["event_th"]
         if source_facts["cause_th"]:
-            summary += f" สาเหตุที่แหล่งข่าวระบุ: {source_facts['cause_th']}"
+            summary += f" ตาม {item['source']}: {source_facts['cause_th']}"
         # The explicit assessment is authoritative; keyword hints must not override it.
         normalized_tags = [tag for tag in normalize_tags(tags) if tag not in THB_TAGS]
         normalized_tags.extend(THB_IMPACTS[impact["direction"]][1])

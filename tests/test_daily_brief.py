@@ -181,6 +181,29 @@ class DailyBriefTests(unittest.TestCase):
             result = brief.extract_source_facts([self.japan_source()])
         self.assertIsNone(result["n1"]["cause_th"])
 
+    def test_extraction_can_correct_unsupported_numbers_once(self):
+        bad = self.japan_extraction()
+        bad["facts"][0]["cause_th"] = "ตลาดรับรู้โอกาสขึ้นดอกเบี้ย 85%"
+        with patch.object(brief, "call_gemini", side_effect=[bad, self.japan_extraction()]) as call:
+            result = brief.extract_source_facts([self.japan_source()])
+        self.assertEqual(call.call_count, 2)
+        self.assertNotIn("85", result["n1"]["cause_th"])
+        self.assertEqual(call.call_args.kwargs["schema"], brief.FACT_SCHEMA)
+
+    def test_buddhist_year_conversion_is_not_an_invented_number(self):
+        brief.validate_fact_numbers("เริ่มปี 2570", "launch in 2027")
+
+    def test_different_source_cause_is_not_replaced_with_priced_in(self):
+        news = self.item("Japan delays floating-rate bonds",
+                         "Investors expect only a few more interest-rate hikes.", source="Bloomberg Economics")
+        extraction = {"facts": [{"id": "n1", "event_th": "ญี่ปุ่นเลื่อนแผนพันธบัตรดอกเบี้ยลอยตัว",
+                                 "event_quote": news["title"], "cause_th": "นักลงทุนคาดว่าจะขึ้นดอกเบี้ยอีกไม่กี่ครั้ง",
+                                 "cause_quote": news["description"], "pricing_status": "not_stated", "pricing_quote": None}]}
+        with patch.object(brief, "call_gemini", return_value=extraction):
+            result = brief.extract_source_facts([news])
+        self.assertEqual(result["n1"]["pricing_status"], "not_stated")
+        self.assertNotIn("รับรู้", result["n1"]["cause_th"])
+
     def test_summary_uses_attributed_facts_instead_of_analysis_stage_rewrite(self):
         facts = self.japan_extraction()["facts"][0]
         generated = self.model_output("mixed")
