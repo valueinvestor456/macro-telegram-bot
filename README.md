@@ -12,7 +12,10 @@ CNBC, Bloomberg Markets/Economics, Federal Reserve monetary-policy releases and
 ECB press releases, then adds today's Forex Factory calendar in Bangkok time.
 News headlines and descriptions are translated and summarized in Thai by Gemini
 Flash-Lite, grounded only in the RSS source text, with source links and cautious
-impact tags. Add a GitHub Actions secret named `GEMINI_API_KEY` from Google AI
+impact tags. The brief includes a separate THB outlook labeled `#บาทอ่อน` or
+`#บาทแข็ง` when the selected sources support a direction; otherwise it explicitly
+states that the direction is unclear rather than guessing. Add a GitHub Actions
+secret named `GEMINI_API_KEY` from Google AI
 Studio; Telegram credentials reuse the existing `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` secrets. Gemini free-tier availability and rate limits depend
 on the selected model and account. Holiday dates are
