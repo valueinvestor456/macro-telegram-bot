@@ -19,6 +19,16 @@ so an omitted model tag cannot silently erase the analysis. Indirect economic
 effects are labeled as assessments rather than reported market moves. The overall
 THB outlook weighs the mechanisms, not a vote count of per-story tags. Policy,
 currency, gold and macro-data stories take priority over general company news.
+Generation now uses two Gemini calls: extract the reported event, attributed cause
+and market-pricing status first, then assess transmission channels. Source quotes
+must match the supplied RSS text and factual numbers must occur in that text.
+The factual paragraph uses the extracted event/cause, not a rewrite from the
+market-analysis stage. "Priced in" must not become "the hiking cycle is ending".
+BOJ/yen stories must consider both USD/FX and carry-trade/repatriation channels;
+yen strength or a lower DXY does not mechanically imply a stronger baht. Channels
+are conditional scenarios unless the source actually reports flows. These checks
+do not verify an entire paywalled article or guarantee semantic accuracy of an
+LLM translation; missing RSS detail remains unknown rather than invented.
 Use the workflow's `dry_run=true` input to inspect the actual generated text in
 Actions logs without sending Telegram; scheduled dispatches continue to send normally.
 Add a GitHub Actions

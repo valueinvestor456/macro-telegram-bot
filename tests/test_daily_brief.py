@@ -25,6 +25,7 @@ class DailyBriefTests(unittest.TestCase):
             "news": [{"id": "n1", "title_th": "เฟดส่งสัญญาณดอกเบี้ยสูงนาน",
                       "summary_th": "เฟดกังวลแรงกดดันเงินเฟ้อและยังไม่เร่งลดดอกเบี้ย", "tags": [],
                       "thb_impact": {"direction": direction,
+                                     "channels": ["usd_fx", "rates"],
                                      "reason_th": "หากดอกเบี้ยสหรัฐสูงนาน อาจหนุนดอลลาร์และกดดันเงินบาท"}}],
             "events": [],
             "outlook": [
@@ -32,9 +33,14 @@ class DailyBriefTests(unittest.TestCase):
                 {"asset": "Gold", "summary_th": "ต้นทุนถือทองอาจสูงขึ้น", "tags": ["#กดดันทองคำ"]},
                 {"asset": "THB", "summary_th": "เงินบาทอาจอ่อนค่าหากดอลลาร์ได้แรงหนุนจากดอกเบี้ย",
                  "tags": [], "thb_impact": {"direction": direction,
+                                           "channels": ["usd_fx", "rates"],
                                            "reason_th": "ดอกเบี้ยสหรัฐอาจหนุนดอลลาร์"}},
             ],
         }
+
+    def source_facts(self):
+        return {"n1": {"event_th": "เฟดส่งสัญญาณดอกเบี้ยสูงนาน", "event_quote": "Fed signals higher rates",
+                       "cause_th": None, "cause_quote": None, "pricing_status": "not_stated", "pricing_quote": None}}
 
     def analyze(self, generated, news=None):
         payload = {"candidates": [{"content": {"parts": [{"text": json.dumps(generated)}]}}]}
@@ -42,6 +48,7 @@ class DailyBriefTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
             patch.object(brief.requests, "post", return_value=response),
+            patch.object(brief, "extract_source_facts", return_value=self.source_facts()),
         ):
             return brief.translate_and_analyze(news or [self.item("Fed signals higher rates")], [])
 
@@ -66,6 +73,7 @@ class DailyBriefTests(unittest.TestCase):
         with (
             patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}),
             patch.object(brief.requests, "post", return_value=response) as post,
+            patch.object(brief, "extract_source_facts", return_value=self.source_facts()),
         ):
             translated = brief.translate_and_analyze(news, [])
         self.assertEqual(translated["news"][0]["title"], "เฟดส่งสัญญาณดอกเบี้ยสูงนาน")
@@ -108,7 +116,8 @@ class DailyBriefTests(unittest.TestCase):
     def test_overall_outlook_is_not_inferred_from_story_or_future_event_tags(self):
         generated = self.model_output()
         generated["outlook"][2]["thb_impact"] = {
-            "direction": "mixed", "reason_th": "ดอกเบี้ยกับแรงซื้อสินทรัพย์เสี่ยงอาจหักล้างกัน"}
+            "direction": "mixed", "channels": ["usd_fx", "risk_sentiment"],
+            "reason_th": "ดอกเบี้ยกับแรงซื้อสินทรัพย์เสี่ยงอาจหักล้างกัน"}
         result = self.analyze(generated)
         self.assertIn("#บาทอ่อน", result["news"][0]["tags"])
         self.assertEqual(result["outlook"][2]["tags"], ["#เงินบาทสองทาง"])
@@ -120,6 +129,7 @@ class DailyBriefTests(unittest.TestCase):
         news = [self.item("Dollar rises against the yen")]
         news[0]["tags"] = ["#บาทอ่อน"]
         generated = self.model_output("neutral")
+        generated["news"][0]["thb_impact"]["channels"].append("carry_trade")
         generated["news"][0]["tags"] = ["#หนุนเงินบาท", "#บาทแข็ง"]
         result = self.analyze(generated, news)
         self.assertEqual(result["news"][0]["tags"], ["#ผลต่อเงินบาทจำกัด"])
@@ -135,6 +145,64 @@ class DailyBriefTests(unittest.TestCase):
         result = brief.summarize([*corporate, policy], datetime.now(timezone.utc))
         self.assertEqual(result[0]["title"], policy["title"])
         self.assertEqual(len(result), 6)
+
+    def japan_source(self):
+        return self.item("Japan postpones floating-rate JGB launch",
+                         "Investors have already priced in BOJ rate hikes, reducing demand for the hedge.")
+
+    def japan_extraction(self):
+        return {"facts": [{"id": "n1", "event_th": "ญี่ปุ่นเลื่อนแผนออกพันธบัตรดอกเบี้ยลอยตัว",
+                           "event_quote": "Japan postpones floating-rate JGB launch",
+                           "cause_th": "ตลาดรับรู้การขึ้นดอกเบี้ย BOJ แล้ว จึงลดความต้องการป้องกันความเสี่ยง",
+                           "cause_quote": "Investors have already priced in BOJ rate hikes, reducing demand for the hedge.",
+                           "pricing_status": "priced_in", "pricing_quote": "already priced in BOJ rate hikes"}]}
+
+    def test_priced_in_source_retains_cause_and_attribution(self):
+        with patch.object(brief, "call_gemini", return_value=self.japan_extraction()):
+            result = brief.extract_source_facts([self.japan_source()])
+        self.assertEqual(result["n1"]["pricing_status"], "priced_in")
+        self.assertIn("ตลาดรับรู้", result["n1"]["cause_th"])
+
+    def test_extractor_rejects_invented_cause_quote_and_probability(self):
+        for field, value in (("cause_quote", "BOJ has ended its hiking cycle"),
+                             ("cause_th", "ตลาดรับรู้โอกาสขึ้นดอกเบี้ยถึง 85%"),
+                             ("cause_th", "วงจรขึ้นดอกเบี้ย BOJ ใกล้สิ้นสุด")):
+            with self.subTest(field=field, value=value):
+                generated = self.japan_extraction()
+                generated["facts"][0][field] = value
+                with patch.object(brief, "call_gemini", return_value=generated):
+                    with self.assertRaises(RuntimeError):
+                        brief.extract_source_facts([self.japan_source()])
+
+    def test_missing_cause_stays_unknown_instead_of_being_invented(self):
+        generated = self.japan_extraction()
+        generated["facts"][0].update(cause_th=None, cause_quote=None)
+        with patch.object(brief, "call_gemini", return_value=generated):
+            result = brief.extract_source_facts([self.japan_source()])
+        self.assertIsNone(result["n1"]["cause_th"])
+
+    def test_summary_uses_attributed_facts_instead_of_analysis_stage_rewrite(self):
+        facts = self.japan_extraction()["facts"][0]
+        generated = self.model_output("mixed")
+        generated["news"][0]["summary_th"] = "วงจรขึ้นดอกเบี้ย BOJ ใกล้สิ้นสุด"
+        generated["news"][0]["thb_impact"] = {
+            "direction": "mixed", "channels": ["usd_fx", "carry_trade", "repatriation"],
+            "reason_th": "เยนแข็งอาจกดดอลลาร์และหนุนบาท แต่หากปิด carry trade หรือดึงเงินกลับญี่ปุ่นอาจกดดันบาท"}
+        with patch.object(self, "source_facts", return_value={"n1": facts}):
+            result = self.analyze(generated, [self.japan_source()])
+        self.assertIn("ตลาดรับรู้", result["news"][0]["summary"])
+        self.assertNotIn("ใกล้สิ้นสุด", result["news"][0]["summary"])
+        self.assertIn("ดึงเงินกลับ", result["news"][0]["thb_impact"]["reason_th"])
+
+    def test_japan_policy_cannot_skip_carry_trade_or_repatriation(self):
+        with self.assertRaisesRegex(RuntimeError, "Japan policy news"):
+            self.analyze(self.model_output("neutral"), [self.japan_source()])
+
+    def test_directional_impact_requires_a_transmission_channel(self):
+        generated = self.model_output()
+        generated["news"][0]["thb_impact"]["channels"] = []
+        with self.assertRaisesRegex(RuntimeError, "no transmission channel"):
+            self.analyze(generated)
 
     def test_gemini_key_is_required_when_there_are_news_items(self):
         with patch.dict("os.environ", {}, clear=True):
