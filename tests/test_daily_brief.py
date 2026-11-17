@@ -192,6 +192,13 @@ class DailyBriefTests(unittest.TestCase):
 
     def test_buddhist_year_conversion_is_not_an_invented_number(self):
         brief.validate_fact_numbers("เริ่มปี 2570", "launch in 2027")
+        brief.validate_fact_numbers("คงดอกเบี้ยเดือนที่ 3", "hold rates for a third consecutive month")
+
+    def test_ungrounded_headline_is_replaced_with_checked_event(self):
+        generated = self.model_output()
+        generated["news"][0]["title_th"] = "เฟดเตรียมขึ้นดอกเบี้ย โอกาส 85%"
+        result = self.analyze(generated)
+        self.assertEqual(result["news"][0]["title"], self.source_facts()["n1"]["event_th"])
 
     def test_different_source_cause_is_not_replaced_with_priced_in(self):
         news = self.item("Japan delays floating-rate bonds",

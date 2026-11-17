@@ -93,6 +93,16 @@ def validate_fact_numbers(text: str, source: str) -> None:
     """Do not introduce probabilities, dates or prices absent from the supplied source."""
     numbers = lambda value: {number.replace(",", "") for number in re.findall(r"\d+(?:[.,]\d+)*", value)}
     source_numbers = numbers(source)
+    # Preserve quantities when translating English words (e.g. "third month" -> "เดือนที่ 3").
+    for number, words in enumerate((
+        "zero", "one first", "two second", "three third", "four fourth", "five fifth",
+        "six sixth", "seven seventh", "eight eighth", "nine ninth", "ten tenth",
+        "eleven eleventh", "twelve twelfth", "thirteen thirteenth", "fourteen fourteenth",
+        "fifteen fifteenth", "sixteen sixteenth", "seventeen seventeenth", "eighteen eighteenth",
+        "nineteen nineteenth", "twenty twentieth",
+    )):
+        if re.search(r"\b(?:" + "|".join(words.split()) + r")\b", source, re.IGNORECASE):
+            source_numbers.add(str(number))
     # Thai dates may legitimately render a supplied Gregorian year in Buddhist Era.
     source_numbers |= {str(int(number) + 543) for number in source_numbers
                        if number.isdigit() and 1900 <= int(number) <= 2100}
@@ -455,13 +465,18 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
             raise RuntimeError("Gemini returned an incomplete Thai news item")
         impact = parse_thb_impact(translated.get("thb_impact"))
         original = f"{item['title']} {item['description']}"
-        validate_fact_numbers(title, original)
+        source_facts = facts[item["id"]]
+        try:
+            validate_fact_numbers(title, original)
+            validate_pricing_translation(title, source_facts["pricing_status"])
+        except RuntimeError:
+            # A separately generated headline cannot add facts to the checked event.
+            title = source_facts["event_th"]
+            print(f"[brief] using extracted event as headline for {item['id']}", file=sys.stderr)
         if re.search(r"\b(boj|bank of japan|jgb|japanese yen|yen)\b", original, re.IGNORECASE):
             channels = set(impact["channels"])
             if "usd_fx" not in channels or not channels & {"carry_trade", "repatriation"}:
                 raise RuntimeError("Japan policy news omitted FX and carry/repatriation transmission analysis")
-        source_facts = facts[item["id"]]
-        validate_pricing_translation(title, source_facts["pricing_status"])
         # Keep attributed facts from the extraction stage separate from market inference.
         summary = source_facts["event_th"]
         if source_facts["cause_th"]:
