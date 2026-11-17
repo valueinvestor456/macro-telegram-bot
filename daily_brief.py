@@ -51,6 +51,19 @@ THB_IMPACTS = {
 }
 THB_TAGS = {tag for _, tags in THB_IMPACTS.values() for tag in tags}
 IMPACT_CHANNELS = {"usd_fx", "asian_fx", "carry_trade", "repatriation", "rates", "gold", "trade", "risk_sentiment"}
+FACT_SCHEMA = {
+    "type": "object", "required": ["facts"],
+    "properties": {"facts": {"type": "array", "items": {
+        "type": "object",
+        "required": ["id", "event_th", "event_quote", "cause_th", "cause_quote", "pricing_status", "pricing_quote"],
+        "properties": {
+            "id": {"type": "string"}, "event_th": {"type": "string"}, "event_quote": {"type": "string"},
+            "cause_th": {"type": ["string", "null"]}, "cause_quote": {"type": ["string", "null"]},
+            "pricing_status": {"type": "string", "enum": ["priced_in", "new_surprise", "not_stated"]},
+            "pricing_quote": {"type": ["string", "null"]},
+        },
+    }}},
+}
 
 
 def normalize_tags(tags: list) -> list[str]:
@@ -83,15 +96,18 @@ def validate_fact_numbers(text: str, source: str) -> None:
         raise RuntimeError("Generated news facts contain numbers absent from the source")
 
 
-def call_gemini(prompt: str) -> dict:
+def call_gemini(prompt: str, schema: dict | None = None) -> dict:
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY secret is not configured")
+    generation_config = {"responseMimeType": "application/json", "temperature": 0.2}
+    if schema:
+        generation_config["responseJsonSchema"] = schema
     response = requests.post(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent",
         headers={"x-goog-api-key": api_key, **HEADERS},
         json={"contents": [{"parts": [{"text": prompt}]}],
-              "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}},
+              "generationConfig": generation_config},
         timeout=(10, 45),
     )
     if not response.ok:
@@ -121,10 +137,10 @@ def extract_source_facts(items: list[dict]) -> dict[str, dict]:
         "วันที่ อายุพันธบัตร หรือราคาที่ไม่มีในต้นฉบับ. ห้ามนำความรู้จากข่าวอื่นมาปะปน.\n"
         f"ต้นฉบับ: {json.dumps(sources, ensure_ascii=False)}"
     )
-    generated = call_gemini(prompt)
+    generated = call_gemini(prompt, schema=FACT_SCHEMA)
     entries = generated.get("facts") if isinstance(generated, dict) else None
     if not isinstance(entries, list):
-        raise RuntimeError("Gemini omitted source fact extraction")
+        raise RuntimeError("Gemini omitted source fact extraction; expected facts array")
     by_id = {entry.get("id"): entry for entry in entries if isinstance(entry, dict)}
     facts = {}
     for item in items:
