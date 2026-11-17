@@ -12,9 +12,16 @@ CNBC, Bloomberg Markets/Economics, Federal Reserve monetary-policy releases and
 ECB press releases, then adds today's Forex Factory calendar in Bangkok time.
 News headlines and descriptions are translated and summarized in Thai by Gemini
 Flash-Lite, grounded only in the RSS source text, with source links and cautious
-impact tags. The brief includes a separate THB outlook labeled `#บาทอ่อน` or
-`#บาทแข็ง` when the selected sources support a direction; otherwise it explicitly
-states that the direction is unclear rather than guessing. Add a GitHub Actions
+impact tags. Every story includes a separate, conditional THB impact explanation:
+`#หนุนเงินบาท #บาทแข็ง`, `#กดดันเงินบาท #บาทอ่อน`, `#เงินบาทสองทาง`, or
+`#ผลต่อเงินบาทจำกัด`. The labels are derived from a required structured assessment,
+so an omitted model tag cannot silently erase the analysis. Indirect economic
+effects are labeled as assessments rather than reported market moves. The overall
+THB outlook weighs the mechanisms, not a vote count of per-story tags. Policy,
+currency, gold and macro-data stories take priority over general company news.
+Use the workflow's `dry_run=true` input to inspect the actual generated text in
+Actions logs without sending Telegram; scheduled dispatches continue to send normally.
+Add a GitHub Actions
 secret named `GEMINI_API_KEY` from Google AI
 Studio; Telegram credentials reuse the existing `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` secrets. Gemini free-tier availability and rate limits depend

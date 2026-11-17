@@ -30,15 +30,56 @@ HEADERS = {"User-Agent": "MacroMorningBrief/1.0 (+https://github.com/valueinvest
 ALLOWED_TAGS = {
     "#หนุนทองคำ", "#กดดันทองคำ",
     "#หนุนดอลลาร์", "#กดดันดอลลาร์",
-    "#หนุนบาท", "#กดดันบาท",
+    "#หนุนเงินบาท", "#กดดันเงินบาท", "#เงินบาทสองทาง", "#ผลต่อเงินบาทจำกัด",
     "#บาทอ่อน", "#บาทแข็ง",
 }
 TAG_ALIASES = {
+    "#หนุนทอง": "#หนุนทองคำ",
+    "#หนุนบาท": "#หนุนเงินบาท",
+    "#กดดันบาท": "#กดดันเงินบาท",
     "#หนุนดอลลาร์ บาทอ่อน": "#บาทอ่อน",
     "#กดดันดอลลาร์ บาทแข็ง": "#บาทแข็ง",
     "#หนุนบาท บาทแข็ง": "#บาทแข็ง",
     "#กดดันบาท บาทอ่อน": "#บาทอ่อน",
 }
+THB_IMPACTS = {
+    "strengthen": ("หนุนเงินบาทแข็งค่า (USD/THB ลง)", ["#หนุนเงินบาท", "#บาทแข็ง"]),
+    "weaken": ("กดดันเงินบาทอ่อนค่า (USD/THB ขึ้น)", ["#กดดันเงินบาท", "#บาทอ่อน"]),
+    "mixed": ("แรงหนุนและแรงกดดันเงินบาทหักล้างกัน", ["#เงินบาทสองทาง"]),
+    "neutral": ("ผลต่อเงินบาทจำกัด / ยังชี้ทิศทางไม่ได้", ["#ผลต่อเงินบาทจำกัด"]),
+}
+THB_TAGS = {tag for _, tags in THB_IMPACTS.values() for tag in tags}
+
+
+def normalize_tags(tags: list) -> list[str]:
+    return list(dict.fromkeys(
+        TAG_ALIASES.get(tag, tag) for tag in tags
+        if isinstance(tag, str) and TAG_ALIASES.get(tag, tag) in ALLOWED_TAGS
+    ))
+
+
+def parse_thb_impact(value: object) -> dict:
+    """Require an explicit, explained assessment instead of silently dropping empty tags."""
+    if not isinstance(value, dict) or value.get("direction") not in THB_IMPACTS:
+        raise RuntimeError("Gemini omitted a valid per-item THB impact assessment")
+    reason = value.get("reason_th")
+    if not isinstance(reason, str) or not any("\u0e00" <= char <= "\u0e7f" for char in reason):
+        raise RuntimeError("Gemini omitted the Thai reason for a THB impact assessment")
+    return {"direction": value["direction"], "reason_th": clean(reason, 180)}
+
+
+def macro_priority(item: dict) -> int:
+    """Put policy, currencies, gold and macro data ahead of unrelated corporate stories."""
+    text = f"{item.get('title', '')} {item.get('description', '')}".lower()
+    if item.get("source") in {"Fed", "ECB"} or re.search(
+        r"\b(fed|ecb|federal reserve|central bank|monetary policy|interest rates?|rate hikes?|rate cuts?)\b", text
+    ):
+        return 3
+    if re.search(
+        r"\b(dollar|baht|gold|treasury|yields?|inflation|cpi|pce|payrolls?|unemployment|gdp|retail sales|forex)\b", text
+    ):
+        return 2
+    return 1
 
 
 def clean(value: str | None, limit: int = 1200) -> str:
@@ -110,7 +151,7 @@ def fetch_news(now: datetime) -> list[dict]:
             print(f"[brief] feed unavailable: {source} ({type(exc).__name__})", file=sys.stderr)
     if not succeeded:
         raise RuntimeError("All configured news feeds are unavailable; refusing to send an empty-news brief")
-    ranked = sorted(candidates.values(), key=lambda item: item["published"], reverse=True)[:MAX_NEWS]
+    ranked = sorted(candidates.values(), key=lambda item: (macro_priority(item), item["published"]), reverse=True)[:MAX_NEWS]
     for index, item in enumerate(ranked, 1):
         item["id"] = f"n{index}"
     return ranked
@@ -170,7 +211,7 @@ def summarize(news: list[dict], now: datetime) -> list[dict]:
              "#หนุนทองคำ", "#กดดันทองคำ"),
             (("dollar rises", "dollar gains", "dollar strengthens", "dollar climbs", "dollar firms", "greenback gains"),
              ("dollar falls", "dollar drops", "dollar weakens", "dollar slides", "dollar declines", "greenback falls"),
-             "#บาทอ่อน", "#บาทแข็ง"),
+             "#หนุนดอลลาร์", "#กดดันดอลลาร์"),
             (("baht strengthens", "baht gains", "baht appreciates", "baht firms"),
              ("baht weakens", "baht falls", "baht depreciates", "baht loses"),
              "#บาทแข็ง", "#บาทอ่อน"),
@@ -186,7 +227,7 @@ def summarize(news: list[dict], now: datetime) -> list[dict]:
             "summary": description or "RSS ไม่มีคำอธิบายเพิ่มเติม โปรดเปิดลิงก์ต้นฉบับ",
             "tags": tags,
         })
-    ranked.sort(key=lambda item: item.get("published", ""), reverse=True)
+    ranked.sort(key=lambda item: (macro_priority(item), item.get("published", "")), reverse=True)
     return ranked[:6]
 
 
@@ -209,14 +250,26 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "แปลข่าวและปฏิทินเป็นภาษาไทยทั้งหมด กระชับ ชัดเจน ใช้สำนวนข่าวการเงิน "
         "ยึดเฉพาะข้อมูลใน RSS และปฏิทิน ห้ามแต่งตัวเลข เหตุการณ์ คำพูด ราคา "
         "แนวรับ/แนวต้าน หรือถ้อยแถลง หากข้อมูลไม่พอให้ระบุว่าไม่มีข้อมูลพอยืนยัน "
-        "ห้ามคาดเดาหรือฟันธงผลตลาด\n"
+        "แยกข้อเท็จจริงในข่าวออกจากการประเมินผลกระทบ ห้ามฟันธงราคาหรืออ้างว่าตลาดตอบสนองแล้วหาก RSS ไม่ระบุ. "
+        "ต้องวิเคราะห์ผลต่อเงินบาทของทุกข่าว อนุญาตให้อนุมานแบบมีเงื่อนไขด้วยกลไกเศรษฐกิจ "
+        "ไม่จำเป็นต้องมีคำว่า baht ในต้นฉบับ เช่น ข่าวขึ้นดอกเบี้ย Fed อาจหนุนดอลลาร์และกดดันเงินบาท "
+        "ข่าวลดดอกเบี้ย Fed อาจกดดันดอลลาร์และหนุนเงินบาท; ระบุคำว่า 'อาจ' หรือ 'หาก' เมื่อเป็นผลทางอ้อม. "
+        "อย่าตีความทิศทางค่าเงินประเทศอื่นเป็นทิศทางเงินบาทโดยอัตโนมัติ "
+        "และอย่าบังคับข่าวบริษัทเฉพาะแห่งให้มีผลต่อเงินบาทเมื่อไม่มีกลไกเชื่อมโยงที่เหมาะสม.\n"
         "คืน JSON ตาม schema นี้เท่านั้น: {\"news\":[{\"id\":string,"
-        "\"title_th\":string,\"summary_th\":string,\"tags\":[string]}],"
+        "\"title_th\":string,\"summary_th\":string,\"tags\":[string],"
+        "\"thb_impact\":{\"direction\":\"strengthen\"|\"weaken\"|\"mixed\"|\"neutral\",\"reason_th\":string}}],"
         "\"events\":[{\"id\":string,\"title_th\":string,\"effect_th\":string,"
         "\"tags\":[string]}],\"outlook\":[{\"asset\":\"USD\"|\"Gold\"|\"THB\","
-        "\"summary_th\":string,\"tags\":[string]}]}\n"
-        "คืนข่าวทุกชิ้นโดยรักษา id ให้ตรง; พาดหัวไทยชัดเจน; summary_th ข่าวละ 2-3 ประโยค "
-        "ไม่เกิน 400 ตัวอักษร. คืนรายการปฏิทินทุกชิ้นตาม id เดิม; effect_th สั้นๆ "
+        "\"summary_th\":string,\"tags\":[string],\"thb_impact\":{\"direction\":"
+        "\"strengthen\"|\"weaken\"|\"mixed\"|\"neutral\",\"reason_th\":string}}]}\n"
+        "คืนข่าวทุกชิ้นโดยรักษา id ให้ตรง; พาดหัวไทยชัดเจน; summary_th เป็นข้อเท็จจริงข่าวละ 1-2 ประโยค "
+        "ไม่เกิน 220 ตัวอักษร. ทุกข่าวต้องมี thb_impact พร้อม reason_th ไม่เกิน 140 ตัวอักษร "
+        "อธิบายเหตุ -> ช่องทางส่งผ่าน -> ผลต่อเงินบาท เช่น 'หากดอกเบี้ยสหรัฐสูงนาน ดอลลาร์อาจได้แรงหนุนและกดดันเงินบาท'. "
+        "direction strengthen = หนุนเงินบาท, weaken = กดดันเงินบาท, mixed = มีทั้งแรงหนุนและแรงกดดัน, "
+        "neutral = ผลจำกัด/หลักฐานไม่พอ โดยต้องบอกเหตุผลเฉพาะข่าว ห้ามตอบเพียง 'ไม่มีข้อมูลชี้ทิศทางเงินบาท'. "
+        "ใช้ neutral เมื่อไม่มีกลไกเชื่อมโยงที่สมเหตุผล ไม่ใช่เพียงเพราะข่าวไม่ได้เอ่ยถึงเงินบาท. "
+        "คืนรายการปฏิทินทุกชิ้นตาม id เดิม; effect_th สั้นๆ "
         "อธิบายว่าตัวเลขนั้นอาจสำคัญต่ออะไร ห้ามระบุทิศทางผลลัพธ์ล่วงหน้า. "
         "outlook ต้องมีครบ USD, Gold, THB สรุปภาพรวมจากข่าวชุดนี้เท่านั้น "
         "ไม่สร้างระดับราคา. ให้ THB outlook วิเคราะห์ผลสุทธิของข่าวต่อเงินบาทอย่างชัดเจน "
@@ -225,13 +278,15 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "โดยระยะสั้นหมายถึงวันนี้ถึง 24 ชั่วโมงข้างหน้า ไม่ใช่การรับประกันอนาคต. "
         "ตามด้วยเหตุผลหลัก 1-2 ข้อ และเงื่อนไขจากปฏิทินวันนี้ที่อาจเปลี่ยนมุมมอง "
         "เขียนแบบมีเงื่อนไข ห้ามเดาผลประกาศหรือแต่งค่าคาดการณ์. "
-        "ถ้ามีหลักฐานทิศทาง ให้ใส่แท็ก #บาทอ่อน หรือ #บาทแข็ง เพียงหนึ่งแท็ก "
-        "พร้อมอธิบายเหตุผลจากข่าว; ถ้าหลักฐานขัดแย้งหรือไม่พอ ห้ามเดาและให้ tags เป็น [] "
-        "พร้อมระบุใน summary_th ว่ายังไม่มีข้อมูลชี้ทิศทางเงินบาท. "
-        "ข่าวแต่ละชิ้นให้ใส่แท็กเงินบาทเมื่อมีหลักฐานเฉพาะในข่าวเท่านั้น. "
+        "THB outlook ต้องมี thb_impact เช่นเดียวกับข่าว สรุปน้ำหนักสุทธิจากกลไกและความสำคัญของข่าว "
+        "ห้ามนับจำนวนแท็กเพื่อโหวตทิศทาง และห้ามนำเหตุการณ์ในปฏิทินที่ยังไม่ประกาศมาเป็นข้อเท็จจริง. "
+        "หากแรงหนุนแรงกดดันหักล้างกันใช้ mixed หากไม่มีข้อมูลพอใช้ neutral และอธิบายว่าต้องรออะไร "
+        "โดยไม่ต้องเริ่ม summary_th ด้วยทิศทางอ่อน/แข็งในกรณี mixed/neutral. "
+        "outlook ของ USD/Gold ไม่ต้องมี thb_impact. "
         "ทุก tags เลือกได้เฉพาะจาก "
-        "#หนุนทองคำ #กดดันทองคำ #หนุนดอลลาร์ #กดดันดอลลาร์ #หนุนบาท #กดดันบาท #บาทอ่อน #บาทแข็ง "
-        "และให้ [] เมื่อหลักฐานไม่ชัดเจน. แท็กสะท้อนผลกระทบเบื้องต้น ไม่ใช่คำแนะนำลงทุน.\n"
+        "#หนุนทองคำ #กดดันทองคำ #หนุนดอลลาร์ #กดดันดอลลาร์ #หนุนเงินบาท #กดดันเงินบาท #บาทอ่อน #บาทแข็ง "
+        "และให้ [] เมื่อหลักฐานของสินทรัพย์นั้นไม่ชัดเจน; โปรแกรมจะสร้างแท็กเงินบาทจาก thb_impact. "
+        "อย่าถือว่าตัวอย่างกลไกในคำสั่งเป็นข่าวที่เกิดขึ้นจริง.\n"
         f"ข่าว RSS: {json.dumps(source_items, ensure_ascii=False)}\n"
         f"Forex Factory วันนี้: {json.dumps(source_events, ensure_ascii=False)}"
     )
@@ -266,16 +321,12 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         tags = translated.get("tags", [])
         if not title or not summary or not thai_text(title) or not thai_text(summary) or not isinstance(tags, list):
             raise RuntimeError("Gemini returned an incomplete Thai news item")
-        normalized_tags = [
-            TAG_ALIASES.get(tag, tag) for tag in tags if isinstance(tag, str)
-        ]
-        normalized_tags = [tag for tag in normalized_tags if tag in ALLOWED_TAGS]
-        for tag in item.get("tags", []):
-            tag = TAG_ALIASES.get(tag, tag)
-            if tag in ALLOWED_TAGS and tag not in normalized_tags:
-                normalized_tags.append(tag)
+        impact = parse_thb_impact(translated.get("thb_impact"))
+        # The explicit assessment is authoritative; keyword hints must not override it.
+        normalized_tags = [tag for tag in normalize_tags(tags) if tag not in THB_TAGS]
+        normalized_tags.extend(THB_IMPACTS[impact["direction"]][1])
         thai_news.append({**item, "title": title, "summary": summary,
-                          "tags": normalized_tags})
+                          "tags": normalized_tags, "thb_impact": impact})
 
     translated_events = {entry.get("id"): entry for entry in generated_events if isinstance(entry, dict)}
     thai_events = []
@@ -288,30 +339,21 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
             raise RuntimeError("Gemini returned invalid calendar impact tags")
         thai_events.append({**event, "title_th": clean(translated["title_th"], 100),
                             "effect_th": clean(translated["effect_th"], 100),
-                            "tags": [TAG_ALIASES.get(tag, tag) for tag in tags
-                                     if isinstance(tag, str) and TAG_ALIASES.get(tag, tag) in ALLOWED_TAGS]})
+                            "tags": normalize_tags(tags)})
 
     outlook_by_asset = {entry.get("asset"): entry for entry in generated_outlook if isinstance(entry, dict)}
-    detected_baht_directions = {
-        tag
-        for entry in [*thai_news, *thai_events]
-        for tag in entry["tags"]
-        if tag in {"#บาทอ่อน", "#บาทแข็ง"}
-    }
     thai_outlook = []
     for asset in ("USD", "Gold", "THB"):
         outlook = outlook_by_asset.get(asset)
         if not outlook or not thai_text(outlook.get("summary_th")) or not isinstance(outlook.get("tags"), list):
             raise RuntimeError("Gemini returned an incomplete Thai asset outlook")
-        tags = [TAG_ALIASES.get(tag, tag) for tag in outlook["tags"] if isinstance(tag, str)]
-        tags = [tag for tag in tags if tag in ALLOWED_TAGS]
-        if asset == "THB" and not (set(tags) & {"#บาทอ่อน", "#บาทแข็ง"}):
-            if len(detected_baht_directions) == 1:
-                tags.extend(detected_baht_directions)
-        if asset == "THB" and len(set(tags) & {"#บาทอ่อน", "#บาทแข็ง"}) > 1:
-            raise RuntimeError("Gemini returned conflicting baht direction tags")
+        tags = normalize_tags(outlook["tags"])
+        if asset == "THB":
+            impact = parse_thb_impact(outlook.get("thb_impact"))
+            tags = [tag for tag in tags if tag not in THB_TAGS]
+            tags.extend(THB_IMPACTS[impact["direction"]][1])
         thai_outlook.append({"asset": asset, "summary": clean(outlook["summary_th"], 300),
-                             "tags": tags})
+                             "tags": tags, **({"thb_impact": impact} if asset == "THB" else {})})
     return {"news": thai_news, "events": thai_events, "outlook": thai_outlook}
 
 
@@ -353,9 +395,14 @@ def render(items: list[dict], events: list[dict], outlook: list[dict], now: date
             title = escape(item["title"])
             summary = escape(item["summary"])
             url = escape(item["url"], quote=True)
-            output.extend([f"\n<b>{index}️⃣ {title}</b>", summary,
-                           " ".join(escape(tag) for tag in item["tags"]) or
-                           "⚪ ข่าวนี้ยังไม่มีข้อมูลชี้ทิศทางเงินบาท",
+            impact = item.get("thb_impact")
+            if impact:
+                label = THB_IMPACTS[impact["direction"]][0]
+                effect = f"💱 <b>ผลต่อเงินบาท (ประเมิน): {escape(label)}</b> — {escape(impact['reason_th'])}"
+            else:
+                effect = "💱 ผลต่อเงินบาท: ยังไม่มีบทวิเคราะห์สำหรับข่าวนี้"
+            output.extend([f"\n<b>{index}️⃣ {title}</b>", summary, effect,
+                           "<b>" + " ".join(escape(tag) for tag in item["tags"]) + "</b>",
                            f"แหล่งข่าว: <a href=\"{url}\">{source}</a>"])
         output.extend(["", f"<b>🗓️ ตารางประกาศตัวเลขเศรษฐกิจสำคัญวันนี้ ({local_date.day} {thai_month} {local_date.year + 543})</b>",
                        "<pre>" + escape(calendar_table(agenda, len(events))) + "</pre>",
@@ -366,12 +413,13 @@ def render(items: list[dict], events: list[dict], outlook: list[dict], now: date
             entry = outlook_by_asset.get(asset)
             if entry:
                 tags = " ".join(escape(tag) for tag in entry["tags"])
-                if asset == "THB" and not ({"#บาทอ่อน", "#บาทแข็ง"} & set(entry["tags"])):
+                if asset == "THB" and not (THB_TAGS & set(entry["tags"])):
                     tags = "⚪ ยังไม่มีข้อมูลชี้ทิศทางเงินบาท"
                 if asset == "THB":
                     direction_tags = set(entry["tags"]) & {"#บาทอ่อน", "#บาทแข็ง"}
                     direction = ("เงินบาทมีแนวโน้มอ่อนค่า (USD/THB ขึ้น)" if direction_tags == {"#บาทอ่อน"}
                                  else "เงินบาทมีแนวโน้มแข็งค่า (USD/THB ลง)" if direction_tags == {"#บาทแข็ง"}
+                                 else "แรงหนุนและแรงกดดันเงินบาทหักล้างกัน" if "#เงินบาทสองทาง" in entry["tags"]
                                  else "ทิศทางเงินบาทยังไม่ชัดเจน")
                     output.extend(["", "<b>🇹🇭 แนวโน้มเงินบาท (USD/THB) วันนี้–24 ชั่วโมงข้างหน้า</b>",
                                    f"<b>{direction}</b>", escape(entry["summary"]), tags])
@@ -420,6 +468,9 @@ def main() -> int:
         selected = summarize(news, now)
         analysis = translate_and_analyze(selected, events)
         text = render(analysis["news"], analysis["events"], analysis["outlook"], now)
+        impact_counts = {direction: sum(item["thb_impact"]["direction"] == direction
+                                       for item in analysis["news"]) for direction in THB_IMPACTS}
+        print(f"[brief] THB assessments: {json.dumps(impact_counts)}", file=sys.stderr)
         if os.environ.get("DAILY_BRIEF_DRY_RUN", "false").lower() == "true":
             print(BeautifulSoup(text, "html.parser").get_text())
             return 0

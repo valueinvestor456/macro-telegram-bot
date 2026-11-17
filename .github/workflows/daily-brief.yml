@@ -2,6 +2,11 @@ name: Daily World Economy Brief
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview news and per-story THB analysis without sending Telegram
+        type: boolean
+        default: false
 
 concurrency:
   group: daily-world-economy-brief
@@ -25,4 +30,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DAILY_BRIEF_DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
         run: python daily_brief.py
