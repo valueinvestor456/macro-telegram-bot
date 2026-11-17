@@ -6,6 +6,7 @@ from email.utils import parsedate_to_datetime
 from html import escape, unescape
 import json
 import os
+from pathlib import Path
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -393,6 +394,7 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "required_channel_review": ["usd_fx", "carry_trade or repatriation"] if is_japan_policy_news(item) else [],
     } for item in items]
     source_events = [{"id": f"e{index}", **event} for index, event in enumerate(events)]
+    framework = Path(__file__).with_name("usd_analysis_framework.txt").read_text(encoding="utf-8")
     prompt = (
         "คุณเป็นบรรณาธิการข่าวเศรษฐกิจสำหรับสรุป Telegram ภาษาไทย "
         "เขียนรายงานตามรูปแบบ BREAKING NEWS & ECONOMIC UPDATE "
@@ -457,6 +459,7 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "#หนุนทองคำ #กดดันทองคำ #หนุนดอลลาร์ #กดดันดอลลาร์ #หนุนเยน #กดดันเยน #หนุนเงินบาท #กดดันเงินบาท #บาทอ่อน #บาทแข็ง "
         "และให้ [] เมื่อหลักฐานของสินทรัพย์นั้นไม่ชัดเจน; โปรแกรมจะสร้างแท็กเงินบาทจาก thb_impact. "
         "อย่าถือว่าตัวอย่างกลไกในคำสั่งเป็นข่าวที่เกิดขึ้นจริง.\n"
+        f"กรอบสำหรับวิเคราะห์กลไก (ไม่ใช่ข้อมูลข่าว):\n{framework}\n"
         f"ข่าว RSS: {json.dumps(source_items, ensure_ascii=False)}\n"
         f"Forex Factory วันนี้: {json.dumps(source_events, ensure_ascii=False)}"
     )

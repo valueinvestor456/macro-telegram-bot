@@ -29,6 +29,11 @@ yen strength or a lower DXY does not mechanically imply a stronger baht. Channel
 are conditional scenarios unless the source actually reports flows. These checks
 do not verify an entire paywalled article or guarantee semantic accuracy of an
 LLM translation; missing RSS detail remains unknown rather than invented.
+The running analyzer loads `usd_analysis_framework.txt` on every generation.
+This reviewed subset of the user's CK teaching material asks who would need to
+buy/sell USD, distinguishes observed flows from scenarios, treats gold-import
+and gold-export flows separately, and separates Score/CIP/PPP/Trend. Dated prices,
+private portfolio examples and conflicting carry/zone rules are not imported.
 Use the workflow's `dry_run=true` input to inspect the actual generated text in
 Actions logs without sending Telegram; scheduled dispatches continue to send normally.
 Add a GitHub Actions

@@ -82,6 +82,9 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "test-key")
         prompt = post.call_args.kwargs["json"]["contents"][0]["parts"][0]["text"]
         self.assertIn("ไม่จำเป็นต้องมีคำว่า baht ในต้นฉบับ", prompt)
+        self.assertIn("เหตุการณ์ → ผู้เล่นที่ได้รับผล → ความต้องการซื้อ/ขาย USD → ผลต่อเงินบาท", prompt)
+        self.assertIn("ทองขึ้นมีผลต่อบาทได้สองทาง", prompt)
+        self.assertIn("CIP ไม่ใช่เป้าหมาย Spot วันพรุ่งนี้", prompt)
 
     def test_empty_model_tags_still_produce_explained_per_story_baht_tag(self):
         analysis = self.analyze(self.model_output())
