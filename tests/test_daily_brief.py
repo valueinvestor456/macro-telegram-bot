@@ -211,6 +211,20 @@ class DailyBriefTests(unittest.TestCase):
         self.assertEqual(result["n1"]["pricing_status"], "not_stated")
         self.assertNotIn("รับรู้", result["n1"]["cause_th"])
 
+    def test_few_remaining_hikes_does_not_prove_already_priced_in(self):
+        news = self.item("Japan delays floating-rate bond launch", "Investors expect only a few more hikes.")
+        extraction = self.japan_extraction()
+        extraction["facts"][0].update(event_quote=news["title"], cause_th=None, cause_quote=None,
+                                       pricing_quote=news["description"])
+        with self.assertRaisesRegex(RuntimeError, "not evidence"):
+            brief.validate_source_facts([news], extraction)
+
+    def test_japan_bond_headline_requires_channels_without_boj_keyword(self):
+        item = self.item("Japan Said to Delay Floating-Rate Bond Launch Given Weak Demand",
+                         "Investors expect only a few more interest-rate hikes.")
+        self.assertTrue(brief.is_japan_policy_news(item))
+        self.assertFalse(brief.is_japan_policy_news(self.item("Japan curry chain gets a new owner")))
+
     def test_summary_uses_attributed_facts_instead_of_analysis_stage_rewrite(self):
         facts = self.japan_extraction()["facts"][0]
         generated = self.model_output("mixed")

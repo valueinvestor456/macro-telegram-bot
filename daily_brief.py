@@ -148,6 +148,7 @@ def extract_source_facts(items: list[dict]) -> dict[str, dict]:
         "ทุก quote ต้องคัดลอกช่วงข้อความต่อเนื่องจาก title หรือ description จริง ห้ามแต่งหรือแปล quote. "
         "cause_th ต้องมี cause_quote รองรับ; pricing_status ที่ไม่ใช่ not_stated ต้องมี pricing_quote รองรับ. "
         "priced in หมายถึงราคาสะท้อนความคาดหวังแล้ว ไม่ใช่จบรอบขึ้นดอกเบี้ยหรือคาดว่าจะขึ้นอีกน้อย. "
+        "หากต้นฉบับเพียงกล่าวว่าคาดว่าจะขึ้นอีกไม่กี่ครั้ง ยังไม่ใช่หลักฐาน priced_in ให้ใช้ not_stated. "
         "อย่าแปลงแผน/การพิจารณา/คำบอกของแหล่งข่าวเป็นมติทางการ และห้ามเติมตัวเลขความน่าจะเป็น "
         "วันที่ อายุพันธบัตร หรือราคาที่ไม่มีในต้นฉบับ. ห้ามนำความรู้จากข่าวอื่นมาปะปน.\n"
         f"ต้นฉบับ: {json.dumps(sources, ensure_ascii=False)}"
@@ -189,6 +190,11 @@ def validate_source_facts(items: list[dict], generated: object) -> dict[str, dic
             raise RuntimeError("News has invalid pricing status")
         if pricing != "not_stated" and not supported(entry.get("pricing_quote")):
             raise RuntimeError("Market pricing claim has no matching source evidence")
+        if pricing == "priced_in" and not re.search(
+            r"pric(?:ed|ing)[ -]in|factored[ -]in|baked[ -]in|discounted|already reflected|fully reflected|in (?:the )?prices?",
+            entry["pricing_quote"], re.IGNORECASE,
+        ):
+            raise RuntimeError("Expecting a few more hikes is not evidence of priced-in expectations; use not_stated")
         translated = f"{entry['event_th']} {entry.get('cause_th') or ''}"
         validate_fact_numbers(translated, source)
         validate_pricing_translation(translated, pricing)
@@ -217,6 +223,13 @@ def macro_priority(item: dict) -> int:
     ):
         return 2
     return 1
+
+
+def is_japan_policy_news(item: dict) -> bool:
+    text = f"{item['title']} {item['description']}"
+    return bool(re.search(r"\b(boj|bank of japan|jgbs?|japanese yen|yen)\b", text, re.IGNORECASE)
+                or (re.search(r"\bjapan(?:ese)?\b", text, re.IGNORECASE)
+                    and re.search(r"\b(bonds?|rates?|monetary)\b", text, re.IGNORECASE)))
 
 
 def clean(value: str | None, limit: int = 1200) -> str:
@@ -377,6 +390,7 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "id": item["id"], "source": item["source"], "title": item["title"],
         "description": item["description"], "detected_tags": item.get("tags", []),
         "source_facts": facts[item["id"]],
+        "required_channel_review": ["usd_fx", "carry_trade or repatriation"] if is_japan_policy_news(item) else [],
     } for item in items]
     source_events = [{"id": f"e{index}", **event} for index, event in enumerate(events)]
     prompt = (
@@ -418,6 +432,9 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         "ไม่เกิน 220 ตัวอักษร. ทุกข่าวต้องมี thb_impact พร้อม reason_th ไม่เกิน 240 ตัวอักษร "
         "channels เลือกจาก usd_fx, asian_fx, carry_trade, repatriation, rates, gold, trade, risk_sentiment "
         "ระบุเฉพาะที่วิเคราะห์จริง; neutral ใช้ [] ได้เมื่อไม่มีกลไก "
+        "reason_th ต้องเป็นภาษาไทยธรรมชาติ ห้ามแสดงรหัสช่องทางอย่าง usd_fx ให้ผู้อ่านเห็น. "
+        "ข่าวกำกับดูแลหรือการแทรกแซงสภาพคล่องไม่ใช่สัญญาณขึ้น/ลงดอกเบี้ยโดยอัตโนมัติ "
+        "ห้ามสรุปว่าหนุนดอลลาร์จากคำว่าเสถียรภาพหรือการแทรกแซงชั่วคราวเพียงอย่างเดียว. "
         "อธิบายเหตุ -> ช่องทางส่งผ่าน -> ผลต่อเงินบาท เช่น 'หากดอกเบี้ยสหรัฐสูงนาน ดอลลาร์อาจได้แรงหนุนและกดดันเงินบาท'. "
         "direction strengthen = หนุนเงินบาท, weaken = กดดันเงินบาท, mixed = มีทั้งแรงหนุนและแรงกดดัน, "
         "neutral = ผลจำกัด/หลักฐานไม่พอ โดยต้องบอกเหตุผลเฉพาะข่าว ห้ามตอบเพียง 'ไม่มีข้อมูลชี้ทิศทางเงินบาท'. "
@@ -443,7 +460,18 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
         f"ข่าว RSS: {json.dumps(source_items, ensure_ascii=False)}\n"
         f"Forex Factory วันนี้: {json.dumps(source_events, ensure_ascii=False)}"
     )
-    generated = call_gemini(prompt)
+    for attempt in range(2):
+        generated = call_gemini(prompt)
+        try:
+            return validate_analysis(items, events, facts, generated)
+        except RuntimeError as exc:
+            if attempt:
+                raise
+            print(f"[brief] correcting market analysis: {exc}", file=sys.stderr)
+            prompt += "\nแก้คำตอบให้ครบตาม required_channel_review ของทุกข่าว: " + str(exc)
+
+
+def validate_analysis(items: list[dict], events: list[dict], facts: dict[str, dict], generated: dict) -> dict:
     try:
         generated_news = generated["news"]
         generated_events = generated["events"]
@@ -473,7 +501,7 @@ def translate_and_analyze(items: list[dict], events: list[dict]) -> dict:
             # A separately generated headline cannot add facts to the checked event.
             title = source_facts["event_th"]
             print(f"[brief] using extracted event as headline for {item['id']}", file=sys.stderr)
-        if re.search(r"\b(boj|bank of japan|jgb|japanese yen|yen)\b", original, re.IGNORECASE):
+        if is_japan_policy_news(item):
             channels = set(impact["channels"])
             if "usd_fx" not in channels or not channels & {"carry_trade", "repatriation"}:
                 raise RuntimeError("Japan policy news omitted FX and carry/repatriation transmission analysis")
