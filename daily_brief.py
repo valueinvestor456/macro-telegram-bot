@@ -650,6 +650,7 @@ def website_digest(items: list[dict], now: datetime) -> dict:
         stories.append({
             "title": item["title"], "summary": item["summary"], "source": item["source"], "url": item["url"],
             "direction": impact["direction"], "reason": impact["reason_th"], "weight": weight, "vote": vote,
+            "asset_effects": [tag.removeprefix("#") for tag in item["tags"] if tag in ALLOWED_TAGS - THB_TAGS],
         })
     weaker = sum(story["vote"] for story in stories if story["vote"] > 0)
     stronger = -sum(story["vote"] for story in stories if story["vote"] < 0)
