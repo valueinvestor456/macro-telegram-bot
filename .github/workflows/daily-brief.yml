@@ -7,13 +7,17 @@ on:
         description: Preview news and per-story THB analysis without sending Telegram
         type: boolean
         default: false
+      website_only:
+        description: Publish a fresh website digest without sending Telegram
+        type: boolean
+        default: false
 
 concurrency:
   group: daily-world-economy-brief
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   send-brief:
@@ -31,4 +35,24 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DAILY_BRIEF_DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+          DAILY_BRIEF_WEBSITE_ONLY: ${{ inputs.website_only && 'true' || 'false' }}
+          DAILY_BRIEF_WEBSITE_OUTPUT: ${{ runner.temp }}/usd-daily-news.json
         run: python daily_brief.py
+      - name: Publish dashboard digest
+        if: ${{ !inputs.dry_run }}
+        env:
+          DIGEST_FILE: ${{ runner.temp }}/usd-daily-news.json
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          branch=usd-daily-news
+          previous=$(git ls-remote --heads origin "refs/heads/$branch")
+          parents=()
+          if [[ -n "$previous" ]]; then
+            git fetch --no-tags origin "refs/heads/$branch"
+            parents=(-p FETCH_HEAD)
+          fi
+          blob=$(git hash-object -w "$DIGEST_FILE")
+          tree=$(printf '100644 blob %s\tlatest.json\n' "$blob" | git mktree)
+          commit=$(git commit-tree "$tree" "${parents[@]}" -m 'Publish daily USD/THB news digest')
+          git push origin "$commit:refs/heads/$branch"

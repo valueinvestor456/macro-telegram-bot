@@ -515,7 +515,7 @@ def validate_analysis(items: list[dict], events: list[dict], facts: dict[str, di
         # The explicit assessment is authoritative; keyword hints must not override it.
         normalized_tags = [tag for tag in normalize_tags(tags) if tag not in THB_TAGS]
         normalized_tags.extend(THB_IMPACTS[impact["direction"]][1])
-        thai_news.append({**item, "title": title, "summary": summary,
+        thai_news.append({**item, "title": title, "summary": summary, "macro_priority": macro_priority(item),
                           "tags": normalized_tags, "thb_impact": impact, "source_facts": source_facts})
 
     translated_events = {entry.get("id"): entry for entry in generated_events if isinstance(entry, dict)}
@@ -565,7 +565,7 @@ def calendar_table(events: list[dict], total_count: int | None = None) -> str:
     return "\n".join(rows)
 
 
-def render(items: list[dict], events: list[dict], outlook: list[dict], now: datetime) -> str:
+def render_brief(items: list[dict], events: list[dict], outlook: list[dict], now: datetime) -> tuple[str, list[dict]]:
     thai_day = ("วันจันทร์", "วันอังคาร", "วันพุธ", "วันพฤหัสบดี", "วันศุกร์", "วันเสาร์", "วันอาทิตย์")[now.astimezone(BANGKOK).weekday()]
     local_date = now.astimezone(BANGKOK)
     thai_month = ("มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -632,7 +632,31 @@ def render(items: list[dict], events: list[dict], outlook: list[dict], now: date
         text = assemble(visible, agenda)
     if len(text) > MAX_MESSAGE:
         raise ValueError(f"Telegram message too long: {len(text)} characters")
-    return text
+    return text, visible
+
+
+def render(items: list[dict], events: list[dict], outlook: list[dict], now: datetime) -> str:
+    return render_brief(items, events, outlook, now)[0]
+
+
+def website_digest(items: list[dict], now: datetime) -> dict:
+    stories = []
+    for item in items:
+        impact = item["thb_impact"]
+        weight = item["macro_priority"]
+        if item["source_facts"]["pricing_status"] == "priced_in":
+            weight *= 0.5
+        vote = {"weaken": 1, "strengthen": -1}.get(impact["direction"], 0) * weight
+        stories.append({
+            "title": item["title"], "summary": item["summary"], "source": item["source"], "url": item["url"],
+            "direction": impact["direction"], "reason": impact["reason_th"], "weight": weight, "vote": vote,
+        })
+    weaker = sum(story["vote"] for story in stories if story["vote"] > 0)
+    stronger = -sum(story["vote"] for story in stories if story["vote"] < 0)
+    return {
+        "published_at": now.astimezone(timezone.utc).isoformat(), "stories": stories,
+        "weaker": weaker, "stronger": stronger, "net": weaker - stronger,
+    }
 
 
 def send(text: str) -> None:
@@ -657,7 +681,7 @@ def main() -> int:
         events = fetch_calendar(now)
         selected = summarize(news, now)
         analysis = translate_and_analyze(selected, events)
-        text = render(analysis["news"], analysis["events"], analysis["outlook"], now)
+        text, visible = render_brief(analysis["news"], analysis["events"], analysis["outlook"], now)
         impact_counts = {direction: sum(item["thb_impact"]["direction"] == direction
                                        for item in analysis["news"]) for direction in THB_IMPACTS}
         print(f"[brief] THB assessments: {json.dumps(impact_counts)}", file=sys.stderr)
@@ -669,8 +693,11 @@ def main() -> int:
                 }, ensure_ascii=False))
             print(BeautifulSoup(text, "html.parser").get_text())
             return 0
-        send(text)
-        print(f"[brief] Telegram confirmed at {now.astimezone(BANGKOK).isoformat()}")
+        if os.environ.get("DAILY_BRIEF_WEBSITE_ONLY") != "true":
+            send(text)
+            print(f"[brief] Telegram confirmed at {now.astimezone(BANGKOK).isoformat()}")
+        if output := os.environ.get("DAILY_BRIEF_WEBSITE_OUTPUT"):
+            Path(output).write_text(json.dumps(website_digest(visible, now), ensure_ascii=False) + "\n", encoding="utf-8")
         return 0
     except Exception as exc:
         print(f"[brief] failed: {type(exc).__name__}: {str(exc)[:180]}", file=sys.stderr)
