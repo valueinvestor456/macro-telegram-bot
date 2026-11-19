@@ -1,1 +1,141 @@
-{"published_at": "2026-11-19T00:45:55.013930+00:00", "stories": [{"title": "ว่างงานออสเตรเลียพุ่งแตะ 4.9% หลัง RBA เร่งขึ้นดอกเบี้ย", "summary": "อัตราการว่างงานของออสเตรเลียพุ่งขึ้นสู่ระดับ 4.9% ในเดือนตุลาคม ตาม Bloomberg Economics: การปรับขึ้นอัตราดอกเบี้ยอย่างรวดเร็วของธนาคารกลางออสเตรเลียเพื่อชะลอเศรษฐกิจและลดเงินเฟ้อ", "source": "Bloomberg Economics", "url": "https://www.bloomberg.com/news/articles/2026-11-19/australian-unemployment-jumps-to-4-9-following-rba-rate-hikes", "direction": "neutral", "reason": "เศรษฐกิจออสเตรเลียที่ชะลอตัวอาจลดความน่าสนใจของสินทรัพย์ในภูมิภาค แต่ไม่มีกลไกส่งผ่านโดยตรงต่อเงินบาทในขณะนี้", "weight": 3, "vote": 0, "asset_effects": []}, {"title": "ซีอีโอ Citi ชี้ตลาดกังวลความยั่งยืนของเงินทุน AI", "summary": "Jane Fraser ซีอีโอของ Citi กล่าวถึงประเด็นที่นักลงทุนกำลังพิจารณาเกี่ยวกับ NVIDIA และ AI ตาม Bloomberg Markets: นักลงทุนให้ความสำคัญกับความต่อเนื่องของการจัดหาเงินทุนที่เกี่ยวข้องกับ AI และผู้นำบริษัทในอนาคต", "source": "Bloomberg Markets", "url": "https://www.bloomberg.com/news/videos/2026-11-18/jane-fraser-on-ipo-pipeline-ai-interest-rate-outlook-video", "direction": "neutral", "reason": "เป็นประเด็นเฉพาะรายอุตสาหกรรมและบริษัท ยังไม่มีผลกระทบต่อกระแสเงินทุนเคลื่อนย้ายในภาพรวมที่ส่งผลต่อเงินบาท", "weight": 3, "vote": 0, "asset_effects": []}, {"title": "ทองคำทรงตัวใกล้ระดับต่ำสุดในรอบ 14 เดือน หลังเฟดส่งสัญญาณขึ้นดอกเบี้ยต่อ", "summary": "ราคาทองคำทรงตัวใกล้ระดับต่ำสุดในรอบ 14 เดือน ตาม Bloomberg Markets: เจ้าหน้าที่ธนาคารกลางสหรัฐฯ ส่งสัญญาณเชิงรุก (hawkish) ตอกย้ำความคาดหวังเรื่องการขึ้นอัตราดอกเบี้ยต่อเนื่องไปจนถึงปีหน้า", "source": "Bloomberg Markets", "url": "https://www.bloomberg.com/news/articles/2026-11-18/gold-steadies-near-14-month-low-as-fed-signals-more-rate-hikes", "direction": "weaken", "reason": "หากราคาทองคำปรับตัวลงต่อเนื่อง อาจลดแรงกดดันจากการนำเข้าทองคำ แต่หากดอลลาร์แข็งค่าจากดอกเบี้ยขาขึ้น อาจกดดันเงินบาทผ่านการแข็งค่าของดอลลาร์ในตลาดโลก", "weight": 3, "vote": 3, "asset_effects": []}, {"title": "ธนาคารกลางนิวซีแลนด์พบต้นทุนเชื้อเพลิงดันเงินเฟ้อวงกว้าง", "summary": "ธนาคารกลางนิวซีแลนด์พบหลักฐานว่าต้นทุนเชื้อเพลิงที่สูงขึ้นอาจส่งผลต่อเงินเฟ้อในวงกว้าง", "source": "Bloomberg Economics", "url": "https://www.bloomberg.com/news/articles/2026-11-18/rbnz-sees-signs-of-higher-fuel-costs-adding-to-broader-inflation", "direction": "neutral", "reason": "เป็นปัจจัยภายในของนิวซีแลนด์ ไม่มีผลกระทบโดยตรงต่อทิศทางเงินบาท", "weight": 3, "vote": 0, "asset_effects": []}, {"title": "รายงานประชุมเฟดเผยเจ้าหน้าที่กังวลผลกระทบ AI ต่อเงินเฟ้อ", "summary": "รายงานการประชุมธนาคารกลางสหรัฐฯ ระบุว่าเจ้าหน้าที่คาดว่าจะมีการขึ้นอัตราดอกเบี้ยอีกและกังวลเกี่ยวกับผลกระทบของ AI ต่อเงินเฟ้อ", "source": "CNBC", "url": "https://www.cnbc.com/2026/11/18/fed-minutes-october-2026.html", "direction": "weaken", "reason": "หากเฟดคงท่าทีขึ้นดอกเบี้ยต่อเนื่อง ดอลลาร์อาจได้รับแรงหนุนและกดดันเงินบาท แต่ต้องติดตามความชัดเจนของตัวเลขเศรษฐกิจสหรัฐฯ ประกอบ", "weight": 3, "vote": 3, "asset_effects": []}], "weaker": 6, "stronger": 0, "net": 6}
+{
+    "published_at":  "2026-11-19T00:45:55.013930+00:00",
+    "stories":  [
+                    {
+                        "title":  "ว่างงานออสเตรเลียพุ่งแตะ 4.9% หลัง RBA เร่งขึ้นดอกเบี้ย",
+                        "summary":  "อัตราการว่างงานของออสเตรเลียพุ่งขึ้นสู่ระดับ 4.9% ในเดือนตุลาคม ตาม Bloomberg Economics: การปรับขึ้นอัตราดอกเบี้ยอย่างรวดเร็วของธนาคารกลางออสเตรเลียเพื่อชะลอเศรษฐกิจและลดเงินเฟ้อ",
+                        "source":  "Bloomberg Economics",
+                        "url":  "https://www.bloomberg.com/news/articles/2026-11-19/australian-unemployment-jumps-to-4-9-following-rba-rate-hikes",
+                        "direction":  "neutral",
+                        "reason":  "เศรษฐกิจออสเตรเลียที่ชะลอตัวอาจลดความน่าสนใจของสินทรัพย์ในภูมิภาค แต่ไม่มีกลไกส่งผ่านโดยตรงต่อเงินบาทในขณะนี้",
+                        "weight":  3,
+                        "vote":  0,
+                        "asset_effects":  [
+
+                                          ]
+                    },
+                    {
+                        "title":  "ซีอีโอ Citi ชี้ตลาดกังวลความยั่งยืนของเงินทุน AI",
+                        "summary":  "Jane Fraser ซีอีโอของ Citi กล่าวถึงประเด็นที่นักลงทุนกำลังพิจารณาเกี่ยวกับ NVIDIA และ AI ตาม Bloomberg Markets: นักลงทุนให้ความสำคัญกับความต่อเนื่องของการจัดหาเงินทุนที่เกี่ยวข้องกับ AI และผู้นำบริษัทในอนาคต",
+                        "source":  "Bloomberg Markets",
+                        "url":  "https://www.bloomberg.com/news/videos/2026-11-18/jane-fraser-on-ipo-pipeline-ai-interest-rate-outlook-video",
+                        "direction":  "neutral",
+                        "reason":  "เป็นประเด็นเฉพาะรายอุตสาหกรรมและบริษัท ยังไม่มีผลกระทบต่อกระแสเงินทุนเคลื่อนย้ายในภาพรวมที่ส่งผลต่อเงินบาท",
+                        "weight":  3,
+                        "vote":  0,
+                        "asset_effects":  [
+
+                                          ]
+                    },
+                    {
+                        "title":  "ทองคำทรงตัวใกล้ระดับต่ำสุดในรอบ 14 เดือน หลังเฟดส่งสัญญาณขึ้นดอกเบี้ยต่อ",
+                        "summary":  "ราคาทองคำทรงตัวใกล้ระดับต่ำสุดในรอบ 14 เดือน ตาม Bloomberg Markets: เจ้าหน้าที่ธนาคารกลางสหรัฐฯ ส่งสัญญาณเชิงรุก (hawkish) ตอกย้ำความคาดหวังเรื่องการขึ้นอัตราดอกเบี้ยต่อเนื่องไปจนถึงปีหน้า",
+                        "source":  "Bloomberg Markets",
+                        "url":  "https://www.bloomberg.com/news/articles/2026-11-18/gold-steadies-near-14-month-low-as-fed-signals-more-rate-hikes",
+                        "direction":  "weaken",
+                        "reason":  "หากราคาทองคำปรับตัวลงต่อเนื่อง อาจลดแรงกดดันจากการนำเข้าทองคำ แต่หากดอลลาร์แข็งค่าจากดอกเบี้ยขาขึ้น อาจกดดันเงินบาทผ่านการแข็งค่าของดอลลาร์ในตลาดโลก",
+                        "weight":  3,
+                        "vote":  3,
+                        "asset_effects":  [
+
+                                          ]
+                    },
+                    {
+                        "title":  "ธนาคารกลางนิวซีแลนด์พบต้นทุนเชื้อเพลิงดันเงินเฟ้อวงกว้าง",
+                        "summary":  "ธนาคารกลางนิวซีแลนด์พบหลักฐานว่าต้นทุนเชื้อเพลิงที่สูงขึ้นอาจส่งผลต่อเงินเฟ้อในวงกว้าง",
+                        "source":  "Bloomberg Economics",
+                        "url":  "https://www.bloomberg.com/news/articles/2026-11-18/rbnz-sees-signs-of-higher-fuel-costs-adding-to-broader-inflation",
+                        "direction":  "neutral",
+                        "reason":  "เป็นปัจจัยภายในของนิวซีแลนด์ ไม่มีผลกระทบโดยตรงต่อทิศทางเงินบาท",
+                        "weight":  3,
+                        "vote":  0,
+                        "asset_effects":  [
+
+                                          ]
+                    },
+                    {
+                        "title":  "รายงานประชุมเฟดเผยเจ้าหน้าที่กังวลผลกระทบ AI ต่อเงินเฟ้อ",
+                        "summary":  "รายงานการประชุมธนาคารกลางสหรัฐฯ ระบุว่าเจ้าหน้าที่คาดว่าจะมีการขึ้นอัตราดอกเบี้ยอีกและกังวลเกี่ยวกับผลกระทบของ AI ต่อเงินเฟ้อ",
+                        "source":  "CNBC",
+                        "url":  "https://www.cnbc.com/2026/11/18/fed-minutes-october-2026.html",
+                        "direction":  "weaken",
+                        "reason":  "หากเฟดคงท่าทีขึ้นดอกเบี้ยต่อเนื่อง ดอลลาร์อาจได้รับแรงหนุนและกดดันเงินบาท แต่ต้องติดตามความชัดเจนของตัวเลขเศรษฐกิจสหรัฐฯ ประกอบ",
+                        "weight":  3,
+                        "vote":  3,
+                        "asset_effects":  [
+
+                                          ]
+                    }
+                ],
+    "weaker":  6,
+    "stronger":  0,
+    "net":  6,
+    "calendar":  {
+                     "date":  "2026-11-19",
+                     "events":  [
+                                    {
+                                        "time":  "01:00",
+                                        "currency":  "NZD",
+                                        "title":  "RBNZ Gov Breman Speaks",
+                                        "impact":  "Medium",
+                                        "forecast":  "",
+                                        "previous":  "",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "02:00",
+                                        "currency":  "USD",
+                                        "title":  "FOMC Meeting Minutes",
+                                        "impact":  "High",
+                                        "forecast":  "",
+                                        "previous":  "",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "07:30",
+                                        "currency":  "AUD",
+                                        "title":  "Unemployment Rate",
+                                        "impact":  "High",
+                                        "forecast":  "4.7%",
+                                        "previous":  "4.7%",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "07:30",
+                                        "currency":  "AUD",
+                                        "title":  "Employment Change",
+                                        "impact":  "High",
+                                        "forecast":  "25.5K",
+                                        "previous":  "-39.3K",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "20:30",
+                                        "currency":  "USD",
+                                        "title":  "Unemployment Claims",
+                                        "impact":  "Medium",
+                                        "forecast":  "198K",
+                                        "previous":  "200K",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "20:30",
+                                        "currency":  "USD",
+                                        "title":  "Philly Fed Manufacturing Index",
+                                        "impact":  "Medium",
+                                        "forecast":  "20.6",
+                                        "previous":  "20.9",
+                                        "effect":  ""
+                                    },
+                                    {
+                                        "time":  "20:30",
+                                        "currency":  "EUR",
+                                        "title":  "ECB President Lagarde Speaks",
+                                        "impact":  "Medium",
+                                        "forecast":  "",
+                                        "previous":  "",
+                                        "effect":  ""
+                                    }
+                                ]
+                 }
+}
