@@ -642,7 +642,7 @@ def render(items: list[dict], events: list[dict], outlook: list[dict], now: date
     return render_brief(items, events, outlook, now)[0]
 
 
-def website_digest(items: list[dict], now: datetime) -> dict:
+def website_digest(items: list[dict], now: datetime, events: list[dict]) -> dict:
     stories = []
     for item in items:
         impact = item["thb_impact"]
@@ -660,6 +660,14 @@ def website_digest(items: list[dict], now: datetime) -> dict:
     return {
         "published_at": now.astimezone(timezone.utc).isoformat(), "stories": stories,
         "weaker": weaker, "stronger": stronger, "net": weaker - stronger,
+        "calendar": {
+            "date": now.astimezone(BANGKOK).date().isoformat(),
+            "events": [{
+                "time": event["time"], "currency": event["currency"], "title": event.get("title_th") or event["title"],
+                "impact": event["impact"], "forecast": event["forecast"], "previous": event["previous"],
+                "effect": event.get("effect_th", ""),
+            } for event in events],
+        },
     }
 
 
@@ -701,7 +709,7 @@ def main() -> int:
             send(text)
             print(f"[brief] Telegram confirmed at {now.astimezone(BANGKOK).isoformat()}")
         if output := os.environ.get("DAILY_BRIEF_WEBSITE_OUTPUT"):
-            Path(output).write_text(json.dumps(website_digest(visible, now), ensure_ascii=False) + "\n", encoding="utf-8")
+            Path(output).write_text(json.dumps(website_digest(visible, now, analysis["events"]), ensure_ascii=False) + "\n", encoding="utf-8")
         return 0
     except Exception as exc:
         print(f"[brief] failed: {type(exc).__name__}: {str(exc)[:180]}", file=sys.stderr)
