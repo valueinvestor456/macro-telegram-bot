@@ -19,7 +19,7 @@ BANGKOK = ZoneInfo("Asia/Bangkok")
 NEWS_WINDOW = timedelta(hours=24)
 MAX_NEWS = 36
 MAX_MESSAGE = 4096
-CALENDAR_URL = "https://usd.deepsleep456.com/calendar.json"
+CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 FEEDS = (
     ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
     ("Bloomberg Markets", "https://feeds.bloomberg.com/markets/news.rss"),
@@ -311,8 +311,7 @@ def fetch_news(now: datetime) -> list[dict]:
 def fetch_calendar(now: datetime) -> list[dict]:
     response = requests.get(CALENDAR_URL, headers=HEADERS, timeout=(5, 15))
     response.raise_for_status()
-    payload = response.json()
-    events = payload.get("events") if isinstance(payload, dict) else None
+    events = response.json()
     if not isinstance(events, list):
         raise ValueError("Forex Factory calendar response has no events")
     today = now.astimezone(BANGKOK).date()
